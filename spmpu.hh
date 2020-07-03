@@ -1,10 +1,65 @@
 #if !defined(_SIMPLE_MPU_)
 
+
+template <typename T, int bits> class NInt {
+public:
+  inline NInt();
+  inline NInt(const T& src);
+  inline ~NInt();
+  
+  inline NInt<T,bits>& operator ++ ();
+  inline NInt<T,bits>  operator ++ (int);
+  inline NInt<T,bits>& operator -- ();
+  inline NInt<T,bits>  operator -- (int);
+  inline NInt<T,bits>  operator -  () const;
+  inline NInt<T,bits>  operator +  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator += (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator -  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator -= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator *  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator *= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator /  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator /= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator %  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator %= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator << ( const int& b)            const;
+  inline NInt<T,bits>& operator <<= (const int& b);
+  inline NInt<T,bits>  operator >> ( const int& b)            const;
+  inline NInt<T,bits>& operator >>= (const int& b);
+  inline NInt<T,bits>  operator &  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator &= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator |  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator |= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator ^  (const NInt<T,bits>& src) const;
+  inline NInt<T,bits>& operator ^= (const NInt<T,bits>& src);
+  inline NInt<T,bits>  operator ~  ()                         const;
+  inline NInt<T,bits>& operator =  (const NInt<T,bits>& src);
+  inline NInt<T,bits>& operator =  (const NInt<NInt<T,bits>,bits*2>& src);
+  inline NInt<T,bits>& operator =  (const int& src);
+  inline NInt<T,bits>& operator =  (NInt<T,bits>&& src);
+  inline bool           operator <  (const NInt<T,bits>& src) const;
+  inline bool           operator <= (const NInt<T,bits>& src) const;
+  inline bool           operator >  (const NInt<T,bits>& src) const;
+  inline bool           operator >= (const NInt<T,bits>& src) const;
+  inline bool           operator == (const NInt<T,bits>& src) const;
+  inline bool           operator != (const NInt<T,bits>& src) const;
+  inline bool           operator && (const NInt<T,bits>& src) const;
+  inline bool           operator || (const NInt<T,bits>& src) const;
+  inline bool           operator !    () const;
+  inline                operator bool () const;
+  inline                operator int  () const;
+};
+
+
 template <typename T, int bits> class SimplePMPU {
 public:
   inline SimplePMPU();
   inline ~SimplePMPU();
   inline void nand(const int& dst, const int& src, const int& blksize, const int& cnt, const int& dist);
+  template <int nits> inline void bid(const NInt<T,nits>& x, const int& start, const int& cnt, const int& dist, const int& offset);
+  template <int nits> inline void bmov(const NInt<T,nits>& x, const int& start, const int& cnt, const int& dist);
+  template <int nits> inline void bmovrev(vector<NInt<T,nits> >& x, const int& start, const int& cnt, const int& dist);
+  template <int nits> inline void call(const int& start, const int& cnt, void (*func)(NInt<T,nits>& x));
   T   ireg;
   int pctr;
 };
@@ -22,7 +77,6 @@ template <typename T, int bits> inline void SimplePMPU<T,bits>::nand(const int& 
   assert(0 <= dst && 0 <= src && 0 < blksize && 0 < cnt && 0 < dist);
   assert(blksize <= dist);
   assert(dst + dist * cnt + blksize < bits);
-  assert(src + dist * cnt + blksize < bits);
   static T one(1);
   const auto mask0((one << blksize) - one);
         T    maskd;
@@ -35,67 +89,6 @@ template <typename T, int bits> inline void SimplePMPU<T,bits>::nand(const int& 
   pctr ++;
   return;
 }
-
-
-
-template <typename T, int bits, int rs> class vInt : SimplePMPU<T, bits> {
-public:
-  inline vInt() {
-    ;
-  }
-  inline ~vInt() {
-    ;
-  }
- 
-  inline void load(const int& idx, const T& x);
-  inline T    stor(const int& idx);
-  
-  // one operand.
-  inline void increment(const int& cond, const int& start, const int& dist = 1);
-  inline void decrement(const int& cond, const int& start, const int& dist = 1);
-  inline void Not(const int& cond, const int& start, const int& dist = 1);
-  inline void negate(const int& cond, const int& start, const int& dist = 1);
-  // every pair.
-  inline void plus(const int& cond, const int& start, const int& dist = 1);
-  inline void minus(const int& cond, const int& start, const int& dist = 1);
-  inline void mul(const int& cond, const int& start, const int& dist = 1);
-  inline void div(const int& cond, const int& start, const int& dist = 1);
-  inline void residue(const int& cond, const int& start, const int& dist = 1);
-  inline void shift(const int& cond, const int& b, const int& start, const int& dist = 1);
-  inline void And(const int& cond, const int& start, const int& dist = 1);
-  inline void Or(const int& cond, const int& start, const int& dist = 1);
-  inline void Xor(const int& cond, const int& start, const int& dist = 1);
-  // 
-  inline void transfer(const int& cond, const int& dst, const int& src, const int& dist = 1);
-  inline void cmp(const int& cond, const int& start, const int& dist = 1);
-};
-
-
-template <typename T, int bits, int rs> class vFloat : vInt<T, bits, rs> {
-public:
-  inline vFloat(){
-    ;
-  }
-  inline ~vFloat() {
-    ;
-  }
-  
-  inline void load(const int& idx, const T& x);
-  inline T    stor(const int& idx);
-  
-  // one operand.
-  inline void negate(const int& cond, const int& start, const int& dist = 1);
-  // every pair.
-  inline void plus(const int& cond, const int& start, const int& dist = 1);
-  inline void minus(const int& cond, const int& start, const int& dist = 1);
-  inline void mul(const int& cond, const int& start, const int& dist = 1);
-  inline void div(const int& cond, const int& start, const int& dist = 1);
-  inline void residue(const int& cond, const int& start, const int& dist = 1);
-  inline void floor(const int& cond, const int& start, const int& dist = 1);
-  // 
-  inline void transfer(const int& cond, const int& dst, const int& src, const int& dist = 1);
-  inline void cmp(const int& cond, const int& start, const int& dist = 1);
-};
 
 #define _SIMPLE_MPU_
 #endif

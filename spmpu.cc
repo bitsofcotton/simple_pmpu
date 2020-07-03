@@ -20,10 +20,10 @@ typedef DUInt<u13, 8192>  u14;
 typedef DUInt<u14, 16384> u15;
 typedef DUInt<u15, 32768> u16;
 
-typedef vFloat<u16, 65536, 32> vfloat;
+typedef SimplePMPU<u16, 65536> pmpu;
 
 int main(int argc, char* argv[]) {
-  vfloat vf;
+  pmpu p;
   return 0;
 }
 
