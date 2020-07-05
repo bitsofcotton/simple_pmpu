@@ -866,7 +866,7 @@ template <typename T, typename W, int bits, typename U> inline                  
     deci.m >>= - int(deci.e);
   else if(uzero() < deci.e)
     deci.m <<=   int(deci.e);
-  return (1 << SIGN) ? - deci.m : deci.m;
+  return s & (1 << SIGN) ? - deci.m : deci.m;
 }
 
 template <typename T, typename W, int bits, typename U> inline                  SimpleFloat<T,W,bits,U>::operator SimpleFloat<T,W,bits,U> () const {
