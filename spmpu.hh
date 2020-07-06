@@ -48,7 +48,18 @@ public:
   inline bool           operator !    () const;
   inline                operator bool () const;
   inline                operator int  () const;
+  inline NInt<T,bits>&  alu(const vector<NInt<T,bits> >& a) const;
 };
+
+template <typename T, int bits> inline NInt<T,bits>& NInt<T,bits>::alu(const vector<NInt<T,bits> >& a) const {
+  assert(0 < a.size() && a.size() <= bits);
+  NInt<T, bits> r;
+  r = a[0];
+  for(int i = 1; i < a.size(); i ++)
+    if(int(*this >> (i - 1)) & 1)
+      r ^= a[i];
+  return r;
+}
 
 
 template <typename T, int bits> class SimplePMPU {
@@ -58,6 +69,7 @@ public:
   inline void nand(const int& dst, const int& src, const int& blksize, const int& cnt, const int& dist);
   template <int nits> inline void bid(const NInt<T,nits>& x, const int& start, const int& cnt, const int& dist, const int& offset);
   template <int nits> inline void bmov(const NInt<T,nits>& x, const int& start, const int& cnt, const int& dist);
+  template <int nits> inline void bmov(const vector<NInt<T,nits> >& x, const int& start, const int& cnt, const int& dist);
   template <int nits> inline void bmovrev(vector<NInt<T,nits> >& x, const int& start, const int& cnt, const int& dist);
   template <int nits> inline void call(const int& start, const int& cnt, void (*func)(NInt<T,nits>& x));
   T   ireg;
