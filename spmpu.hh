@@ -48,16 +48,20 @@ public:
   inline bool           operator !    () const;
   inline                operator bool () const;
   inline                operator int  () const;
-  inline NInt<T,bits>&  alu(const vector<NInt<T,bits> >& a) const;
+  inline NInt<T,bits>&  alu(const vector<vector<NInt<T,bits> > >& a) const;
 };
 
-template <typename T, int bits> inline NInt<T,bits>& NInt<T,bits>::alu(const vector<NInt<T,bits> >& a) const {
-  assert(0 < a.size() && a.size() <= bits);
-  NInt<T, bits> r;
-  r = a[0];
-  for(int i = 1; i < a.size(); i ++)
-    if(int(*this >> (i - 1)) & 1)
-      r ^= a[i];
+template <typename T, int bits> inline NInt<T,bits>& NInt<T,bits>::alu(const vector<vector<NInt<T,bits> > >& a) const {
+  assert(0 < a.size());
+  NInt<T, bits> r(- 1);
+  for(int i = 0; i < a.size(); i ++) {
+    assert(0 < a[i].size() && a[i].size() <= bits);
+    NInt<T, bits> l(a[0]);
+    for(int i = 1; i < a.size(); i ++)
+      if(int(*this >> (i - 1)) & 1)
+        l ^= a[i];
+    r &= l;
+  }
   return r;
 }
 
