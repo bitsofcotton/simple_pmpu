@@ -990,7 +990,7 @@ template <typename T, typename W, int bits, typename U> SimpleFloat<T,W,bits,U> 
 template <typename T, typename W, int bits, typename U> SimpleFloat<T,W,bits,U> SimpleFloat<T,W,bits,U>::exp() const {
   if(s & ((1 << INF) | (1 << NaN))) {
     if(! (s & (1 << NaN)) && (s & (1 << SIGN)))
-      return one();
+      return zero();
     return *this;
   }
   if(this->abs() <= one()) {
