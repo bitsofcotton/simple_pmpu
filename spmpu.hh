@@ -33,7 +33,7 @@ template <typename T, int bits> inline void SimplePMPU<T,bits>::nand(const int& 
   for(int i = 0; i < cnt; i ++)
     if((int(ireg >> (condoff + dst)) & cond) == cond) {
       ireg &= mask << (i * blksize + dst);
-      ireg |= T(alu) & (mask << (i * blksize + dst));
+      ireg |= alu & (mask << (i * blksize + dst));
     }
   pctr ++;
   return;
