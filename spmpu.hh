@@ -97,6 +97,9 @@ public:
     uint8_t x : 1;
     uint8_t u : 1;
     uint8_t i : 1;
+    uint8_t in  : 1;
+    uint8_t out : 1;
+    uint8_t reserve : 1;
     T* rel0;
     T* rel1;
   } paging_t;
@@ -107,14 +110,13 @@ public:
     uint8_t i : 5;
   } interrupt_t;
   typedef struct {
-    T  rip;
-    T  irip;
-    T* reg;
-    T* ireg;
-    T  control;
+    T rip;
+    T irip;
+    T reg;
+    T ireg;
+    T control;
     uint8_t  cond;
     paging_t page[pages];
-    paging_t ipage[pages];
     interrupt_t interrupt[ipages];
   } pu_t;
   typedef enum {
@@ -123,51 +125,56 @@ public:
     COND_EQUAL     = 2,
     COND_NOTEQUAL  = 3,
     COND_LESSER    = 4,
-    COND_GREATER   = 5
+    COND_GREATER   = 5,
+    COND_INT_MPU   = 6,
+    COND_NOUSED    = 7
   } cond_e;
   typedef enum {
-    IOP_NOT   = 1,
-    IOP_PLUS  = 2,
-    IOP_INC   = 3,
-    IOP_DEC   = 4,
-    IOP_XOR   = 5,
-    IOP_AND   = 6,
-    IOP_OR    = 7,
-    IOP_SLEFT = 8,
-    IOP_SRIGHT = 9,
-    IOP_CMP   = 10,
-    IOP_LDCONTROL = 11,
-    IOP_STCONTROL = 12,
-    IOP_LDIP  = 13,
-    IOP_STIP  = 14,
+    IOP_NOT   = 0,
+    IOP_PLUS  = 1,
+    IOP_INC   = 2,
+    IOP_DEC   = 3,
+    IOP_XOR   = 4,
+    IOP_AND   = 5,
+    IOP_OR    = 6,
+    IOP_SLEFT = 7,
+    IOP_SRIGHT = 8,
+    IOP_BTEST = 9,
+    IOP_BXOR  = 10,
+    IOP_CMP   = 11,
+    IOP_LDIP  = 12,
+    IOP_STIP  = 13,
+    IOP_NOP   = 14,
+    IOP_INVOP = 15
   } int_op_e;
   typedef enum {
-    OOP_INTERRUPT = 1,
-    OOP_INTERRUPT_MPU = 2,
-    OOP_IRET   = 3,
-    OOP_STPAGE = 4,
-    OOP_STINT  = 5,
-    OOP_NOP    = 6,
+    OOP_INTERRUPT = 0,
+    OOP_INTERRUPT_MPU = 1,
+    OOP_IRET   = 2,
+    OOP_STPAGE = 3,
+    OOP_STINT  = 4,
+    OOP_LDCONTROL = 5,
+    OOP_STCONTROL = 6,
+    OOP_CALLPARALELL = 7,
   } other_op_e;
   typedef struct {
-    uint32_t cond : 6;
-    uint32_t type : 1;
+    uint8_t cond : 7;
+    uint8_t type : 1;
     union {
       struct {
-        uint32_t op  : 5;
-        uint32_t dst : 6;
-        uint32_t src : 6;
-        uint32_t wrt : 6;
+        uint32_t op  : 4;
         uint32_t ref : 1;
-        uint32_t dummy : 1;
+        uint32_t dst : 9;
+        uint32_t src : 9;
+        uint32_t wrt : 9;
       } int_op;
       struct {
-        uint32_t op  : 4;
-        uint32_t pad : 1;
-        uint32_t wrt : 6;
-        uint32_t src : 6;
-        uint32_t interrupt : 6;
-        uint32_t dummy : 2;
+        uint32_t op  : 3;
+        uint32_t ref : 1;
+        uint32_t wrt : 9;
+        uint32_t src : 9;
+        uint32_t interrupt : 5;
+        uint32_t dummy : 5;
       } other_op;
     } op;
   } mnemonic_t;
@@ -198,14 +205,12 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
   for(int i = 0; i < pu.size(); i ++) {
           auto& p(pu[i]);
     const auto& mnemonic(*static_cast<const mnemonic_t*>(p.rip));
-    const auto  interrupted(p.cond & COND_INTERRUPT);
+    const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
     alu[i].next();
     if((mnemonic.cond & p.cond) == mnemonic.cond) {
       if(mnemonic.type) {
         const auto& oop(mnemonic.op.other_op);
-        if(oop.op == OOP_NOP) {
-          ;
-        } else if(oop.op == OOP_INTERRUPT) {
+        if(oop.op == OOP_INTERRUPT) {
           ;
         } else if(interrupted) {
           switch(oop.op) {
@@ -218,7 +223,9 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
             break;
           case OOP_STINT:
             break;
-          case OOP_NOP:
+          case OOP_LDCONTROL:
+            break;
+          case OOP_STCONTROL:
             break;
           default:
             // interrupt.
@@ -230,7 +237,7 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
         }
       } else [
         const auto& iop(mnemonic.op.int_op);
-        const auto  top(static_cast<T*>(interrupted ? p.ireg : p.reg));
+        //const auto  top(static_cast<T*>(interrupted ? p.ireg : p.reg));
               T*    rtop(0);
         if(iop.ref) {
           // page ref.
@@ -270,6 +277,12 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
         case IOP_SRIGHT:
           wrt = dst >> src;
           break;
+        case IOP_BTEST:
+          //
+          break;
+        case IOP_BXOR:
+          //
+          break;
         case IOP_CMP:
           p.cond &= ~ ((1LL << COND_EQUAL)    |
                        (1LL << COND_NOTEQUAL) |
@@ -280,23 +293,13 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
                     (dst <  src ? (1LL << COND_LESSER)  : 0) |
                     (src <  dst ? (1LL << COND_GREATER) : 0);
           break;
-        case IOP_LDCONTROL:
-          if(interrupted)
-            wrt = p.control;
-          else
-            ; // interrupt.
-          break;
-        case IOP_STCONTROL:
-          if(interrupted)
-            p.control = dst;
-          else
-            ; // interrupt.
-          break;
         case IOP_LDIP:
           wrt = interrupted ? p.irip : p.rip;
           break;
         case IOP_STIP:
           (interrupted ? p.irip : p.rip) = dst;
+          break;
+        case IOP_NOP:
           break;
         default:
           // interrupt:
