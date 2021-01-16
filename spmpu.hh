@@ -240,13 +240,13 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
         (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
         break;
       case OP_OP:
-        (interrupted ? ialu : alu).write(wrt, dst, src);
+        (interrupted ? ialu : alu).write(wrt, mnemonic.opoff, dst, src);
         break;
       case OP_NAND:
         wrt = ~ (dst & src);
         break;
       case OP_PLUS:
-        addr.write(wrt, mnemonic.opoff, dst, src);
+        addr.write(wrt, dst, src);
         break;
       case OP_SLEFT:
         wrt = dst << src;
