@@ -89,6 +89,36 @@ template <typename T> inline void SimpleAddr<T>::next() {
 }
 
 
+template <typename T> class SimpleALU {
+public:
+  inline SimpleALU();
+  inline ~SimpleALU();
+  inline void write(T& dst, const T& opoff, const T& src0, const T& src1);
+  inline void next();
+  T* top;
+private:
+  vector<pair<T*, T> > q;
+};
+
+template <typename T> inline SimpleALU<T>::SimpleALU() {
+  q.resize(sizeof(T) * 8, make_pair(static_cast<T*>(0), T(0)));
+  top = static_cast<T*>(0);
+}
+
+template <typename T> inline SimpleALU<T>::~SimpleALU() {
+  ;
+}
+
+template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
+  T wrt(0);
+  for(int i = 0; i < sizeof(T) * 8; i ++) {
+    wrt = ~ (wrt & (src0 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * opoff * 2): 0 ));
+    wrt = ~ (wrt & (src1 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * (opoff * 2 + 1)): 0 ));
+  }
+  q[q.size() - 1] = make_pair(&dst, wrt);
+}
+
+
 template <typename T, int pages, int ipages> class SimpleMPU {
 public:
   typedef struct {
@@ -97,8 +127,8 @@ public:
     uint8_t x : 1;
     uint8_t u : 1;
     uint8_t i : 1;
-    uint8_t writeback : 1;
-    uint8_t readback  : 1;
+    uint8_t nowriteflushcache : 1;
+    uint8_t noreadflushcache  : 1;
     uint8_t perchipcache : 1;
     T rel0;
     T rel1;
@@ -111,8 +141,8 @@ public:
   } interrupt_t;
   typedef struct {
     T rip;
-    T irip;
     T reg;
+    T irip;
     T ireg;
     T control;
     uint8_t  cond;
@@ -130,59 +160,49 @@ public:
     COND_NOUSED    = 7
   } cond_e;
   typedef enum {
-    IOP_NOT   = 0,
-    IOP_PLUS  = 1,
-    IOP_INC   = 2,
-    IOP_DEC   = 3,
-    IOP_XOR   = 4,
-    IOP_AND   = 5,
-    IOP_OR    = 6,
-    IOP_SLEFT = 7,
-    IOP_SRIGHT = 8,
-    IOP_BTEST = 9,
-    IOP_BXOR  = 10,
-    IOP_CMP   = 11,
-    IOP_LDIP  = 12,
-    IOP_STIP  = 13,
-    IOP_CALLPNAND = 14,
-    IOP_CALLPCMP  = 15
-  } int_op_e;
+    OP_LDOPTOP = 0,
+    OP_OP     = 1,
+    OP_NAND   = 2,
+    OP_PLUS   = 3,
+    OP_SLEFT  = 4,
+    OP_SRIGHT = 5,
+    OP_CMP    = 6,
+    OP_LDIP   = 7,
+    OP_STIP   = 8,
+    OP_INT    = 9,
+    OP_IRET   = 10,
+    OP_STPAGEINTCONTROL = 11,
+    OP_LDPAGEINTCONTROL = 12,
+    OP_CALLPCMP  = 13,
+    OP_CALLPNAND = 14,
+    OP_NOP    = 15
+  } op_e;
   typedef enum {
-    OOP_INTERRUPT = 0,
-    OOP_INTERRUPT_MPU = 1,
-    OOP_IRET   = 2,
-    OOP_STPAGE = 3,
-    OOP_STINT  = 4,
-    OOP_LDCONTROL = 5,
-    OOP_STCONTROL = 6,
-    OOP_NOP    = 7,
-  } other_op_e;
+    INT_INVPRIV = 0,
+    INT_DBLINT  = 1,
+    INT_PGFLT   = 2,
+    INT_INVOP   = 3
+  } interrupt_e;
   typedef struct {
-    uint8_t cond : 7;
-    uint8_t type : 1;
-    union {
-      struct {
-        uint32_t op  : 4;
-        uint32_t ref : 1;
-        uint32_t dst : 9;
-        uint32_t src : 9;
-        uint32_t wrt : 9;
-      } int_op;
-      struct {
-        uint32_t op  : 3;
-        uint32_t dummy : 2;
-        uint32_t wrt : 9;
-        uint32_t src : 9;
-        uint32_t interrupt : 9;
-      } other_op;
-    } op;
+    uint8_t off : 7;
+    uint8_t ref : 1;
+  } operand_t;
+  typedef struct {
+    uint8_t   cond;
+    uint8_t   op    : 4;
+    uint8_t   opidx : 4;
+    operand_t dst;
+    operand_t src;
+    operand_t wrt;
   } mnemonic_t;
   inline SimpleMPU();
   inline SimpleMPU(const int& npu);
   inline ~SimpleMPU();
   inline void process();
   vector<pu_t> pu;
-  vector<SimpleAddr<T> > alu;
+  vector<SimpleAddr<T> > addr;
+  vector<SimpleALU<T> > alu;
+  vector<SimpleALU<T> > ialu;
   int pctr;
 };
 
@@ -192,7 +212,9 @@ template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::S
 
 template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::SimpleMPU(const int& npu) {
   pu.resize(npu);
+  addr.resize(npu);
   alu.resize(npu);
+  ialu.resize(npu);
   pctr ^= pctr;
 }
 
@@ -205,105 +227,86 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
           auto& p(pu[i]);
     const auto& mnemonic(*static_cast<const mnemonic_t*>(p.rip));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
+    addr[i].next();
     alu[i].next();
+    ialu[i].next();
     if((mnemonic.cond & p.cond) == mnemonic.cond) {
-      if(mnemonic.type) {
-        const auto& oop(mnemonic.op.other_op);
-        if(oop.op == OOP_INTERRUPT) {
+      const T* top(static_cast<T*>(interrupted ? p.ireg : p.reg));
+      const auto& dst(mnemonic.dst.ref ? : top + mnemonic.dst.off);
+      const auto& src(mnemonic.src.ref ? : top + mnemonic.dst.off);
+      const auto& wrt(mnemonic.wrt.ref ? : top + mnemonic.dst.off);
+      switch(mnemonic.op & 0x0f) {
+      case OP_LDOPTOP:
+        (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
+        break;
+      case OP_OP:
+        (interrupted ? ialu : alu).write(wrt, dst, src);
+        break;
+      case OP_NAND:
+        wrt = ~ (dst & src);
+        break;
+      case OP_PLUS:
+        addr.write(wrt, mnemonic.opoff, dst, src);
+        break;
+      case OP_SLEFT:
+        wrt = dst << src;
+        break;
+      case OP_SRIGHT:
+        wrt = dst >> src;
+        break;
+      case OP_CMP:
+        p.cond &= ~ ((1LL << COND_EQUAL)    |
+                     (1LL << COND_NOTEQUAL) |
+                     (1LL << COND_LESSER)   |
+                     (1LL << COND_GREATER));
+        p.cond |= (dst == src ? (1LL << COND_EQUAL)
+                              : (1LL << COND_NOTEQUAL))    |
+                  (dst <  src ? (1LL << COND_LESSER)  : 0) |
+                  (src <  dst ? (1LL << COND_GREATER) : 0);
+        break;
+      case OP_LDIP:
+        wrt = interrupted ? p.irip : p.rip;
+        break;
+      case OP_STIP:
+        (interrupted ? p.irip : p.rip) = dst;
+        break;
+      case OP_INT:
+        if(interrupted)
+          // double interrupt.
           ;
-        } else if(interrupted) {
-          switch(oop.op) {
-          case OOP_INTERRUPT_MPU:
-            break;
-          case OOP_IRET:
-            p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-            break;
-          case OOP_STPAGE:
-            break;
-          case OOP_STINT:
-            break;
-          case OOP_LDCONTROL:
-            break;
-          case OOP_STCONTROL:
-            break;
-          default:
-            // interrupt.
-            ;
-          }
-        } else {
-          // interrupt.
+        else
           ;
-        }
-      } else [
-        const auto& iop(mnemonic.op.int_op);
-        //const auto  top(static_cast<T*>(interrupted ? p.ireg : p.reg));
-              T*    rtop(0);
-        if(iop.ref) {
-          // page ref.
+        break;
+      case OP_IRET:
+        if(interrupted)
           ;
-        }
-        const auto& dst(*((iop.ref ? rtop : top) +
-                          static_cast<T*>(iop.dst * sizeof(T))));
-        const auto& src(*((iop.ref ? rtop : top) +
-                          static_cast<T*>(iop.src * sizeof(T))));
-        const auto& wrt(*((iop.ref ? rtop : top) +
-                          static_cast<T*>(iop.wrt * sizeof(T))));
-        switch(iop.op) {
-        case IOP_NOT:
-          wrt = ~ dst;
-          break;
-        case IOP_PLUS:
-          alu[i].write(wrt, dst, src);
-          break;
-        case IOP_INC:
-          alu[i].write(wrt, dst, 1);
-          break;
-        case IOP_DEC:
-          alu[i].write(wrt, dst, - 1);
-          break;
-        case IOP_XOR:
-          wrt = dst ^ src;
-          break;
-        case IOP_AND:
-          wrt = dst & src;
-          break;
-        case IOP_OR:
-          wrt = dst | src;
-          break;
-        case IOP_SLEFT:
-          wrt = dst << src;
-          break;
-        case IOP_SRIGHT:
-          wrt = dst >> src;
-          break;
-        case IOP_BTEST:
-          //
-          break;
-        case IOP_BXOR:
-          //
-          break;
-        case IOP_CMP:
-          p.cond &= ~ ((1LL << COND_EQUAL)    |
-                       (1LL << COND_NOTEQUAL) |
-                       (1LL << COND_LESSER)   |
-                       (1LL << COND_GREATER));
-          p.cond |= (dst == src ? (1LL << COND_EQUAL)
-                                : (1LL << COND_NOTEQUAL))    |
-                    (dst <  src ? (1LL << COND_LESSER)  : 0) |
-                    (src <  dst ? (1LL << COND_GREATER) : 0);
-          break;
-        case IOP_LDIP:
-          wrt = interrupted ? p.irip : p.rip;
-          break;
-        case IOP_STIP:
-          (interrupted ? p.irip : p.rip) = dst;
-          break;
-        case IOP_NOP:
-          break;
-        default:
-          // interrupt:
+        else
+          // invop:
           ;
-        }
+        break;
+      case OP_LDPAGEINTCONTROL:
+        if(interrupted)
+          ;
+        else
+          ; // priv
+        break;
+      case OP_STPAGEINTCONTROL:
+        if(interrupted)
+          ;
+        else
+          ; // priv
+        break;
+      case OP_CALLPCMP:
+        // call parallel PMPU.
+        break;
+      case OP_CALLPNAND:
+        // call parallel PMPU.
+        break;
+      case OP_NOP:
+        break;
+      default:
+        // interrupt:
+        assert(0 && "Should not be reached.");;
       }
     }
     p.rip += sizeof(mnemonic_t);
