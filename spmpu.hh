@@ -112,8 +112,8 @@ template <typename T> inline SimpleALU<T>::~SimpleALU() {
 template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
   T wrt(0);
   for(int i = 0; i < sizeof(T) * 8; i ++) {
-    wrt = ~ (wrt & (src0 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * opoff * 2): 0 ));
-    wrt = ~ (wrt & (src1 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * (opoff * 2 + 1)): 0 ));
+    wrt = ~ (wrt & (src0 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * opoff * 2) : 0 ));
+    wrt = ~ (wrt & (src1 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * (opoff * 2 + 1)) : 0 ));
   }
   q[q.size() - 1] = make_pair(&dst, wrt);
 }
@@ -137,7 +137,8 @@ public:
     uint8_t r : 1;
     uint8_t w : 1;
     uint8_t x : 1;
-    uint8_t i : 5;
+    uint8_t i : 4;
+    uint8_t dummy : 1;
   } interrupt_t;
   typedef struct {
     T rip;
@@ -157,7 +158,7 @@ public:
     COND_LESSER    = 4,
     COND_GREATER   = 5,
     COND_INT_MPU   = 6,
-    COND_NOUSED    = 7
+    COND_HALT      = 7
   } cond_e;
   typedef enum {
     OP_LDOPTOP = 0,
@@ -178,10 +179,11 @@ public:
     OP_NOP    = 15
   } op_e;
   typedef enum {
-    INT_INVPRIV = 0,
-    INT_DBLINT  = 1,
-    INT_PGFLT   = 2,
-    INT_INVOP   = 3
+    INT_HALT    = 0,
+    INT_INVPRIV = 1,
+    INT_DBLINT  = 2,
+    INT_PGFLT   = 3,
+    INT_INVOP   = 4 
   } interrupt_e;
   typedef struct {
     uint8_t off : 7;
@@ -227,14 +229,16 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
           auto& p(pu[i]);
     const auto& mnemonic(*static_cast<const mnemonic_t*>(p.rip));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
+    if(p.cond & (1 << COND_HALT)) continue;
     addr[i].next();
     alu[i].next();
     ialu[i].next();
     if((mnemonic.cond & p.cond) == mnemonic.cond) {
       const T* top(static_cast<T*>(interrupted ? p.ireg : p.reg));
-      const auto& dst(mnemonic.dst.ref ? : top + mnemonic.dst.off);
-      const auto& src(mnemonic.src.ref ? : top + mnemonic.dst.off);
-      const auto& wrt(mnemonic.wrt.ref ? : top + mnemonic.dst.off);
+      // XXX:
+      const auto& dst(*(mnemonic.dst.ref ? 0 : top + mnemonic.dst.off));
+      const auto& src(*(mnemonic.src.ref ? 0 : top + mnemonic.dst.off));
+      const auto& wrt(*(mnemonic.wrt.ref ? 0 : top + mnemonic.dst.off));
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
         (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
@@ -273,6 +277,10 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
         (interrupted ? p.ireg : p.reg) = src;
         break;
       case OP_INT:
+        if(! mnemonic.opidx) {
+          p.cond |= (1 << COND_HALT);
+          break;
+        }
         if(interrupted)
           // double interrupt.
           ;
