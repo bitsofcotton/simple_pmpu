@@ -97,11 +97,11 @@ public:
     uint8_t x : 1;
     uint8_t u : 1;
     uint8_t i : 1;
-    uint8_t in  : 1;
-    uint8_t out : 1;
-    uint8_t reserve : 1;
-    T* rel0;
-    T* rel1;
+    uint8_t writeback : 1;
+    uint8_t readback  : 1;
+    uint8_t perchipcache : 1;
+    T rel0;
+    T rel1;
   } paging_t;
   typedef struct {
     uint8_t r : 1;
@@ -144,8 +144,8 @@ public:
     IOP_CMP   = 11,
     IOP_LDIP  = 12,
     IOP_STIP  = 13,
-    IOP_NOP   = 14,
-    IOP_INVOP = 15
+    IOP_CALLPNAND = 14,
+    IOP_CALLPCMP  = 15
   } int_op_e;
   typedef enum {
     OOP_INTERRUPT = 0,
@@ -155,7 +155,7 @@ public:
     OOP_STINT  = 4,
     OOP_LDCONTROL = 5,
     OOP_STCONTROL = 6,
-    OOP_CALLPARALELL = 7,
+    OOP_NOP    = 7,
   } other_op_e;
   typedef struct {
     uint8_t cond : 7;
@@ -170,11 +170,10 @@ public:
       } int_op;
       struct {
         uint32_t op  : 3;
-        uint32_t ref : 1;
+        uint32_t dummy : 2;
         uint32_t wrt : 9;
         uint32_t src : 9;
-        uint32_t interrupt : 5;
-        uint32_t dummy : 5;
+        uint32_t interrupt : 9;
       } other_op;
     } op;
   } mnemonic_t;
