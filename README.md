@@ -1,5 +1,5 @@
-# simple_pmpu
-simple parallel mpu software implementation.
+# Simple PMPU
+Simple parallel MPU concept document.
 
 # we cannot use this without search prior results
 This is concept and only compileable document.
