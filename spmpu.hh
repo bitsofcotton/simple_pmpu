@@ -167,8 +167,8 @@ public:
     OP_SLEFT  = 4,
     OP_SRIGHT = 5,
     OP_CMP    = 6,
-    OP_LDIP   = 7,
-    OP_STIP   = 8,
+    OP_LDIPREGTOP = 7,
+    OP_STIPREGTOP = 8,
     OP_INT    = 9,
     OP_IRET   = 10,
     OP_STPAGEINTCONTROL = 11,
@@ -264,11 +264,13 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
                   (dst <  src ? (1LL << COND_LESSER)  : 0) |
                   (src <  dst ? (1LL << COND_GREATER) : 0);
         break;
-      case OP_LDIP:
+      case OP_LDIPREGTOP:
         wrt = interrupted ? p.irip : p.rip;
+        dst = interrupted ? p.ireg : p.reg;
         break;
-      case OP_STIP:
+      case OP_STIPREGTOP:
         (interrupted ? p.irip : p.rip) = dst;
+        (interrupted ? p.ireg : p.reg) = src;
         break;
       case OP_INT:
         if(interrupted)
