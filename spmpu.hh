@@ -129,7 +129,7 @@ public:
     uint8_t i : 1;
     uint8_t nowriteflushcache : 1;
     uint8_t noreadflushcache  : 1;
-    uint8_t perchipcache : 1;
+    uint8_t nocache : 1;
     T rel0;
     T rel1;
   } paging_t;
@@ -222,6 +222,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
   for(int i = 0; i < pu.size(); i ++) {
           auto& p(pu[i]);
     if(pctr < p.pctr) continue;
+    p.pctr ++;
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
     const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
       static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
@@ -284,6 +285,10 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
           break;
         } else
           ;
+        if(p.pending_interrupt) {
+          p.pending_interrupt = 0;
+          continue;
+        }
         p.pending_interrupt = 0;
         break;
       case OP_IRET:
@@ -325,25 +330,25 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
           p.pending_interrupt = INT_INVPRIV;
         else
           // XXX no page guard.
-          mem.cmp(*static_cast<T>(p.ireg),
-                  *static_cast<T>(p.ireg + sizeof(T)),
-                  *static_cast<T>(p.ireg + sizeof(T) * 2),
-                  *static_cast<T>(p.ireg + sizeof(T) * 3),
-                  *static_cast<T>(p.ireg + sizeof(T) * 4),
-                  *static_cast<T>(p.ireg + sizeof(T) * 5));
+          mem.cmp(*static_cast<T*>(p.ireg),
+                  *static_cast<T*>(p.ireg + sizeof(T)),
+                  *static_cast<T*>(p.ireg + sizeof(T) * 2),
+                  *static_cast<T*>(p.ireg + sizeof(T) * 3),
+                  *static_cast<T*>(p.ireg + sizeof(T) * 4),
+                  *static_cast<T*>(p.ireg + sizeof(T) * 5));
         break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
           // XXX no page guard.
-          mem.nand(*static_cast<T>(p.ireg),
-                   *static_cast<T>(p.ireg + sizeof(T)),
-                   *static_cast<T>(p.ireg + sizeof(T) * 2),
-                   *static_cast<T>(p.ireg + sizeof(T) * 3),
-                   *static_cast<T>(p.ireg + sizeof(T) * 4),
-                   *static_cast<T>(p.ireg + sizeof(T) * 5),
-                   *static_cast<T>(p.ireg + sizeof(T) * 6));
+          mem.nand(*static_cast<T*>(p.ireg),
+                   *static_cast<T*>(p.ireg + sizeof(T)),
+                   *static_cast<T*>(p.ireg + sizeof(T) * 2),
+                   *static_cast<T*>(p.ireg + sizeof(T) * 3),
+                   *static_cast<T*>(p.ireg + sizeof(T) * 4),
+                   *static_cast<T*>(p.ireg + sizeof(T) * 5),
+                   *static_cast<T*>(p.ireg + sizeof(T) * 6));
         break;
       case OP_NOP:
         break;
@@ -352,7 +357,6 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
       }
     }
     p.rip += sizeof(mnemonic_t);
-    p.pctr ++;
   }
   pctr ++;
   return;
