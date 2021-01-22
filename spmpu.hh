@@ -223,6 +223,8 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
           auto& p(pu[i]);
     if(pctr < p.pctr) continue;
     p.pctr ++;
+    assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
+           ((p.cond & (1 << COND_USER)) >> COND_USER));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
     const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
       static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
@@ -293,7 +295,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_IRET:
         if(interrupted)
-          ;
+          p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
         else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
