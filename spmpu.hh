@@ -226,7 +226,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
            ((p.cond & (1 << COND_USER)) >> COND_USER));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
-    // XXX paging:
+    // XXX paging, pipeline:
     const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
       static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
     addr[i].next();
@@ -235,10 +235,13 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
     if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
       const T* top(static_cast<T*>(&mem) + static_cast<T*>(interrupted ? p.ireg : p.reg));
-      // XXX paging, ref:
-      const auto& dst(*(static_cast<T*>(&mem) + (mnemonic.dst.ref ? 0 : top + mnemonic.dst.off)));
-      const auto& src(*(static_cast<T*>(&mem) + (mnemonic.src.ref ? 0 : top + mnemonic.src.off)));
-      const auto& wrt(*(static_cast<T*>(&mem) + (mnemonic.wrt.ref ? 0 : top + mnemonic.wrt.off)));
+      // XXX paging, pipeline:
+      const auto& dst0(*(static_cast<T*>(&mem) + top + mnemonic.dst.off));
+      const auto& dst(mnemonic.dst.ref ? *static_cast<T*>(*dst0) : dst0);
+      const auto& src0(*(static_cast<T*>(&mem) + top + mnemonic.src.off));
+      const auto& src(mnemonic.src.ref ? *static_cast<T*>(*src0) : src0);
+      const auto& wrt0(*(static_cast<T*>(&mem) + top + mnemonic.wrt.off));
+      const auto& wrt(mnemonic.wrt.ref ? *static_cast<T*>(*wrt0) : wrt0);
       if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
