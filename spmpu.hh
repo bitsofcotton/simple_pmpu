@@ -4,33 +4,33 @@ using std::vector;
 using std::pair;
 using std::make_pair;
 
-template <typename T, int bits> class SimplePMPU {
+template <typename T, typename U, int bits> class SimplePMPU {
 public:
   inline SimplePMPU();
   inline ~SimplePMPU();
-  inline void nand(const int& dst, const int& src, const int& blksize, const int& cnt, const int& intsize, const int& cond, const int& condoff);
-  inline void cmp(const int& dst, const int& src, const int& blksize, const int& cnt, const int& intsize, const int& wrt);
-  T   ireg;
+  inline void nand(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& cond, const T& condoff);
+  inline void cmp(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& wrt);
+  U   ireg;
   int pctr;
 };
 
-template <typename T, int bits> inline SimplePMPU<T,bits>::SimplePMPU() {
+template <typename T, typename U, int bits> inline SimplePMPU<T,U,bits>::SimplePMPU() {
   ireg ^= ireg;
   pctr ^= pctr;
 }
 
-template <typename T, int bits> inline SimplePMPU<T,bits>::~SimplePMPU() {
+template <typename T, typename U, int bits> inline SimplePMPU<T,U,bits>::~SimplePMPU() {
   ;
 }
 
-template <typename T, int bits> inline void SimplePMPU<T,bits>::nand(const int& dst, const int& src, const int& blksize, const int& cnt, const int& intsize, const int& cond, const int& condoff) {
+template <typename T, typename U, int bits> inline void SimplePMPU<T,U,bits>::nand(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& cond, const T& condoff) {
   assert(0 <= dst && dst < blksize && 0 <= condoff && condoff < blksize &&
          0 < blksize && 0 < cnt);
   assert(0 <= intsize && intsize < blksize);
-  static T one(1);
+  static U one(1);
   const auto mask((one << intsize) - one);
   const auto alu(~ (ireg & (ireg >> (src - dst))));
-  for(int i = 0; i < cnt; i ++)
+  for(T i = 0; i < cnt; i ++)
     if((int(ireg >> (condoff + dst)) & cond) == cond) {
       ireg &= mask << (i * blksize + dst);
       ireg |= alu & (mask << (i * blksize + dst));
@@ -39,11 +39,11 @@ template <typename T, int bits> inline void SimplePMPU<T,bits>::nand(const int& 
   return;
 }
 
-template <typename T, int bits> inline void SimplePMPU<T,bits>::cmp(const int& dst, const int& src, const int& blksize, const int& cnt, const int& intsize, const int& wrt) {
+template <typename T, typename U, int bits> inline void SimplePMPU<T,U,bits>::cmp(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& wrt) {
   assert(0 <= dst && dst < blksize &&
          0 < blksize && 0 < cnt);
   assert(0 <= intsize && intsize < blksize);
-  static T one(1);
+  static U one(1);
   const auto mask((one << intsize) - one);
   for(int i = 0; i < cnt; i ++) {
     ireg &= ~ (T(15) << (i * blksize + dst + wrt));
@@ -297,9 +297,11 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         }
         break;
       case OP_LDPAGEINTCONTROL:
-        if(interrupted)
-          ;
-        else {
+        if(interrupted) {
+          dst = static_cast<T>(p.page);
+          src = static_cast<T>(p.interrupt);
+          wrt = p.control;
+        } else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
           else
@@ -307,9 +309,11 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         }
         break;
       case OP_STPAGEINTCONTROL:
-        if(interrupted)
-          ;
-        else {
+        if(interrupted) {
+          p.page      = static_cast<paging_t*>(dst);
+          p.interrupt = static_cast<T*>(src);
+          p.control   = wrt;
+        } else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
           else
@@ -320,13 +324,26 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
-          ; // call parallel MPU.
+          // XXX no page guard.
+          mem.cmp(*static_cast<T>(p.ireg),
+                  *static_cast<T>(p.ireg + sizeof(T)),
+                  *static_cast<T>(p.ireg + sizeof(T) * 2),
+                  *static_cast<T>(p.ireg + sizeof(T) * 3),
+                  *static_cast<T>(p.ireg + sizeof(T) * 4),
+                  *static_cast<T>(p.ireg + sizeof(T) * 5));
         break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
-          ; // call parallel MPU.
+          // XXX no page guard.
+          mem.nand(*static_cast<T>(p.ireg),
+                   *static_cast<T>(p.ireg + sizeof(T)),
+                   *static_cast<T>(p.ireg + sizeof(T) * 2),
+                   *static_cast<T>(p.ireg + sizeof(T) * 3),
+                   *static_cast<T>(p.ireg + sizeof(T) * 4),
+                   *static_cast<T>(p.ireg + sizeof(T) * 5),
+                   *static_cast<T>(p.ireg + sizeof(T) * 6));
         break;
       case OP_NOP:
         break;
