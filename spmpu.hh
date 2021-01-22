@@ -226,6 +226,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
            ((p.cond & (1 << COND_USER)) >> COND_USER));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
+    // XXX paging:
     const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
       static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
     addr[i].next();
@@ -234,7 +235,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
     if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
       const T* top(static_cast<T*>(&mem) + static_cast<T*>(interrupted ? p.ireg : p.reg));
-      // XXX:
+      // XXX paging, ref:
       const auto& dst(*(static_cast<T*>(&mem) + (mnemonic.dst.ref ? 0 : top + mnemonic.dst.off)));
       const auto& src(*(static_cast<T*>(&mem) + (mnemonic.src.ref ? 0 : top + mnemonic.src.off)));
       const auto& wrt(*(static_cast<T*>(&mem) + (mnemonic.wrt.ref ? 0 : top + mnemonic.wrt.off)));
@@ -288,8 +289,11 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
           else
             p.pending_interrupt = INT_DBLINT;
           break;
-        } else
-          ;
+        } else {
+          p.irip  = p.interrupt[mnemonic.opidx & 0x0f];
+          p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
+          p.pctr += sizeof(T) * 8 * 2;
+        }
         if(p.pending_interrupt) {
           p.pending_interrupt = 0;
           continue;
@@ -297,9 +301,10 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         p.pending_interrupt = 0;
         break;
       case OP_IRET:
-        if(interrupted)
+        if(interrupted) {
           p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-        else {
+          p.pctr += sizeof(T) * 8 * 2;
+        } else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
           else
