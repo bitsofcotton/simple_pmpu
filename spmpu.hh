@@ -283,7 +283,10 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         if(! mnemonic.opidx)
           p.cond |= (1 << COND_HALT);
         else if(interrupted) {
-          p.pending_interrupt = INT_DBLINT;
+          if(p.pending_interrupt == INT_DBLINT)
+            p.cond |= COND_HALT;
+          else
+            p.pending_interrupt = INT_DBLINT;
           break;
         } else
           ;
