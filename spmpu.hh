@@ -119,7 +119,7 @@ template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, co
 }
 
 
-template <typename T, int pages, int ipages> class SimpleMPU {
+template <typename T, int pages, typename U> class SimpleMPU {
 public:
   typedef struct {
     uint8_t r : 1;
@@ -134,21 +134,15 @@ public:
     T rel1;
   } paging_t;
   typedef struct {
-    uint8_t r : 1;
-    uint8_t w : 1;
-    uint8_t x : 1;
-    uint8_t i : 4;
-    uint8_t dummy : 1;
-  } interrupt_t;
-  typedef struct {
     T rip;
     T reg;
     T irip;
     T ireg;
     T control;
-    uint8_t  cond;
+    T interrupt[0x10];
     paging_t page[pages];
-    interrupt_t interrupt[ipages];
+    uint8_t  cond;
+    uint8_t  pending_interrupt;
   } pu_t;
   typedef enum {
     COND_USER      = 0,
@@ -165,11 +159,11 @@ public:
     OP_OP     = 1,
     OP_NAND   = 2,
     OP_PLUS   = 3,
-    OP_SLEFT  = 4,
-    OP_SRIGHT = 5,
-    OP_CMP    = 6,
-    OP_LDIPREGTOP = 7,
-    OP_STIPREGTOP = 8,
+    OP_SHIFT  = 4,
+    OP_CMP    = 5,
+    OP_LDIPREGTOP  = 6,
+    OP_STIPREGTOP  = 7,
+    OP_STUIPREGTOP = 8,
     OP_INT    = 9,
     OP_IRET   = 10,
     OP_STPAGEINTCONTROL = 11,
@@ -181,9 +175,8 @@ public:
   typedef enum {
     INT_HALT    = 0,
     INT_INVPRIV = 1,
-    INT_DBLINT  = 2,
-    INT_PGFLT   = 3,
-    INT_INVOP   = 4 
+    INT_PGFLT   = 2,
+    INT_DBLINT  = 3
   } interrupt_e;
   typedef struct {
     uint8_t off : 7;
@@ -206,13 +199,14 @@ public:
   vector<SimpleALU<T> > alu;
   vector<SimpleALU<T> > ialu;
   int pctr;
+  U   mem;
 };
 
-template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::SimpleMPU() {
+template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU() {
   pctr ^= pctr;
 }
 
-template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::SimpleMPU(const int& npu) {
+template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU(const int& npu) {
   pu.resize(npu);
   addr.resize(npu);
   alu.resize(npu);
@@ -220,25 +214,27 @@ template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::S
   pctr ^= pctr;
 }
 
-template <typename T, int pages, int ipages> inline SimpleMPU<T,pages,ipages>::~SimpleMPU() {
+template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::~SimpleMPU() {
   ;
 }
 
-template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipages>::process() {
+template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::process() {
   for(int i = 0; i < pu.size(); i ++) {
           auto& p(pu[i]);
-    const auto& mnemonic(*static_cast<const mnemonic_t*>(p.rip));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
-    if(p.cond & (1 << COND_HALT)) continue;
+    const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
+      static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
     addr[i].next();
     alu[i].next();
     ialu[i].next();
-    if((mnemonic.cond & p.cond) == mnemonic.cond) {
-      const T* top(static_cast<T*>(interrupted ? p.ireg : p.reg));
+    if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
+    if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
+      const T* top(static_cast<T*>(&mem) + static_cast<T*>(interrupted ? p.ireg : p.reg));
       // XXX:
-      const auto& dst(*(mnemonic.dst.ref ? 0 : top + mnemonic.dst.off));
-      const auto& src(*(mnemonic.src.ref ? 0 : top + mnemonic.dst.off));
-      const auto& wrt(*(mnemonic.wrt.ref ? 0 : top + mnemonic.dst.off));
+      const auto& dst(*(static_cast<T*>(&mem) + (mnemonic.dst.ref ? 0 : top + mnemonic.dst.off)));
+      const auto& src(*(static_cast<T*>(&mem) + (mnemonic.src.ref ? 0 : top + mnemonic.src.off)));
+      const auto& wrt(*(static_cast<T*>(&mem) + (mnemonic.wrt.ref ? 0 : top + mnemonic.wrt.off)));
+      if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
         (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
@@ -252,11 +248,8 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
       case OP_PLUS:
         addr.write(wrt, dst, src);
         break;
-      case OP_SLEFT:
-        wrt = dst << src;
-        break;
-      case OP_SRIGHT:
-        wrt = dst >> src;
+      case OP_SHIFT:
+        wrt = 0 < src ? dst << src : dst >> - src;
         break;
       case OP_CMP:
         p.cond &= ~ ((1LL << COND_EQUAL)    |
@@ -276,35 +269,50 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
         (interrupted ? p.irip : p.rip) = dst;
         (interrupted ? p.ireg : p.reg) = src;
         break;
+      case OP_STUIPREGTOP:
+        p.rip = dst;
+        p.reg = src;
+        break;
       case OP_INT:
-        if(! mnemonic.opidx) {
+       pint:
+        if(! mnemonic.opidx)
           p.cond |= (1 << COND_HALT);
+        else if(interrupted) {
+          p.pending_interrupt = INT_DBLINT;
           break;
-        }
-        if(interrupted)
-          // double interrupt.
+        } else
           ;
-        else
-          ;
+        p.pending_interrupt = 0;
         break;
       case OP_IRET:
         if(interrupted)
           ;
-        else
-          // invop:
-          ;
+        else {
+          if(p.pending_interrupt)
+            p.pending_interrupt = INT_DBLINT;
+          else
+            p.pending_interrupt = INT_INVPRIV;
+        }
         break;
       case OP_LDPAGEINTCONTROL:
         if(interrupted)
           ;
-        else
-          ; // priv
+        else {
+          if(p.pending_interrupt)
+            p.pending_interrupt = INT_DBLINT;
+          else
+            p.pending_interrupt = INT_INVPRIV;
+        }
         break;
       case OP_STPAGEINTCONTROL:
         if(interrupted)
           ;
-        else
-          ; // priv
+        else {
+          if(p.pending_interrupt)
+            p.pending_interrupt = INT_DBLINT;
+          else
+            p.pending_interrupt = INT_INVPRIV;
+        }
         break;
       case OP_CALLPCMP:
         // call parallel PMPU.
@@ -315,7 +323,6 @@ template <typename T, int pages, int ipages> inline void SimpleMPU<T,pages,ipage
       case OP_NOP:
         break;
       default:
-        // interrupt:
         assert(0 && "Should not be reached.");;
       }
     }

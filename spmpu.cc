@@ -21,9 +21,10 @@ typedef DUInt<u14, 16384> u15;
 typedef DUInt<u15, 32768> u16;
 
 typedef SimplePMPU<u16, 65536> pmpu;
+typedef SimpleMPU<uint16_t, 16, pmpu> mpu;
 
 int main(int argc, char* argv[]) {
-  pmpu p;
+  mpu p;
   return 0;
 }
 
