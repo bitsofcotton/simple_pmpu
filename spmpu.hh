@@ -143,6 +143,7 @@ public:
     paging_t page[pages];
     uint8_t  cond;
     uint8_t  pending_interrupt;
+    T pctr;
   } pu_t;
   typedef enum {
     COND_USER      = 0,
@@ -198,12 +199,12 @@ public:
   vector<SimpleAddr<T> > addr;
   vector<SimpleALU<T> > alu;
   vector<SimpleALU<T> > ialu;
-  int pctr;
   U   mem;
+  T   pctr;
 };
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU() {
-  pctr ^= pctr;
+  ;
 }
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU(const int& npu) {
@@ -211,7 +212,6 @@ template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::Simple
   addr.resize(npu);
   alu.resize(npu);
   ialu.resize(npu);
-  pctr ^= pctr;
 }
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::~SimpleMPU() {
@@ -221,6 +221,7 @@ template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::~Simpl
 template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::process() {
   for(int i = 0; i < pu.size(); i ++) {
           auto& p(pu[i]);
+    if(pctr < p.pctr) continue;
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
     const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
       static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
@@ -237,6 +238,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
       if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
+        p.pctr += sizeof(T) * 8 * 2;
         (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
         break;
       case OP_OP:
@@ -315,10 +317,16 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         }
         break;
       case OP_CALLPCMP:
-        // call parallel PMPU.
+        if(i || ! interrupted)
+          p.pending_interrupt = INT_INVPRIV;
+        else
+          ; // call parallel MPU.
         break;
       case OP_CALLPNAND:
-        // call parallel PMPU.
+        if(i || ! interrupted)
+          p.pending_interrupt = INT_INVPRIV;
+        else
+          ; // call parallel MPU.
         break;
       case OP_NOP:
         break;
@@ -327,6 +335,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
       }
     }
     p.rip += sizeof(mnemonic_t);
+    p.pctr ++;
   }
   pctr ++;
   return;
