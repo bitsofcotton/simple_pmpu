@@ -25,6 +25,8 @@ typedef SimpleMPU<uint16_t, 16, pmpu> mpu;
 
 int main(int argc, char* argv[]) {
   mpu p;
+  // initialize;
+  while(true) p.process();
   return 0;
 }
 

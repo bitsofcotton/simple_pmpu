@@ -112,10 +112,17 @@ template <typename T> inline SimpleALU<T>::~SimpleALU() {
 template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
   T wrt(0);
   for(int i = 0; i < sizeof(T) * 8; i ++) {
-    wrt = ~ (wrt & (src0 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * opoff * 2) : 0 ));
-    wrt = ~ (wrt & (src1 & (1 << i) ? top + (sizeof(T) * 8) * (i + sizeof(T) * 8 * (opoff * 2 + 1)) : 0 ));
+    wrt = ~ (wrt & (src0 & (1 << i) ? top[i * 8 + 8 * opoff * 2] : 0 ));
+    wrt = ~ (wrt & (src1 & (1 << i) ? top[i * 8 + 8 * (opoff * 2 + 1)] : 0 ));
   }
   q[q.size() - 1] = make_pair(&dst, wrt);
+}
+
+template <typename T> inline void SimpleALU<T>::next() {
+  if(q[0].first) *(q[0].first) = q[0].second;
+  for(int i = 0; i < q.size() - 1; i ++)
+    q[i] = q[i + 1];
+  q[q.size() - 1] = make_pair(static_cast<T*>(0), T(0));
 }
 
 
@@ -139,8 +146,10 @@ public:
     T irip;
     T ireg;
     T control;
-    T interrupt[0x10];
-    paging_t page[pages];
+    // T interrupt[0x10];
+    // paging_t page[pages];
+    T* interrupt;
+    paging_t *page;
     uint8_t  cond;
     uint8_t  pending_interrupt;
     T pctr;
@@ -227,35 +236,38 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
            ((p.cond & (1 << COND_USER)) >> COND_USER));
     const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
     // XXX paging, pipeline:
-    const auto& mnemonic(*(static_cast<const mnemonic_t*>(&mem) +
-      static_cast<const mnemonic_t*>(interrupted ? p.irip : p.rip)));
+    const auto& mnemonic(*(static_cast<mnemonic_t*>(reinterpret_cast<void*>(
+      reinterpret_cast<size_t>(&mem) + size_t(interrupted ? p.irip : p.rip)))));
     addr[i].next();
     alu[i].next();
     ialu[i].next();
     if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
     if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
-      const T* top(static_cast<T*>(&mem) + static_cast<T*>(interrupted ? p.ireg : p.reg));
+      const auto  top(reinterpret_cast<size_t>(&mem) + size_t(interrupted ? p.ireg : p.reg));
       // XXX paging, pipeline:
-      const auto& dst0(*(static_cast<T*>(&mem) + top + mnemonic.dst.off));
-      const auto& dst(mnemonic.dst.ref ? *static_cast<T*>(*dst0) : dst0);
-      const auto& src0(*(static_cast<T*>(&mem) + top + mnemonic.src.off));
-      const auto& src(mnemonic.src.ref ? *static_cast<T*>(*src0) : src0);
-      const auto& wrt0(*(static_cast<T*>(&mem) + top + mnemonic.wrt.off));
-      const auto& wrt(mnemonic.wrt.ref ? *static_cast<T*>(*wrt0) : wrt0);
+      auto& dst0(*(static_cast<T*>(reinterpret_cast<void*>(
+        reinterpret_cast<size_t>(&mem) + top + mnemonic.dst.off * sizeof(T)))));
+      auto& dst(mnemonic.dst.ref ? *(static_cast<T*>(reinterpret_cast<void*>(dst0))) : dst0);
+      auto& src0(*(static_cast<T*>(reinterpret_cast<void*>(
+        reinterpret_cast<size_t>(&mem) + top + mnemonic.src.off * sizeof(T)))));
+      auto& src(mnemonic.src.ref ? *(static_cast<T*>(reinterpret_cast<void*>(src0))) : src0);
+      auto& wrt0(*(static_cast<T*>(reinterpret_cast<void*>(
+        reinterpret_cast<size_t>(&mem) + top + mnemonic.wrt.off * sizeof(T)))));
+      auto& wrt(mnemonic.wrt.ref ? *(static_cast<T*>(reinterpret_cast<void*>(wrt0))) : wrt0);
       if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
         p.pctr += sizeof(T) * 8 * 2;
-        (interrupted ? ialu : alu).top = static_cast<T>(&wrt);
+        (interrupted ? ialu[i] : alu[i]).top = &wrt;
         break;
       case OP_OP:
-        (interrupted ? ialu : alu).write(wrt, mnemonic.opoff, dst, src);
+        (interrupted ? ialu[i] : alu[i]).write(wrt, mnemonic.opidx, dst, src);
         break;
       case OP_NAND:
         wrt = ~ (dst & src);
         break;
       case OP_PLUS:
-        addr.write(wrt, dst, src);
+        addr[i].write(wrt, dst, src);
         break;
       case OP_SHIFT:
         wrt = 0 < src ? dst << src : dst >> - src;
@@ -316,8 +328,9 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_LDPAGEINTCONTROL:
         if(interrupted) {
-          dst = static_cast<T>(p.page);
-          src = static_cast<T>(p.interrupt);
+          // XXX offset:
+          dst = static_cast<T>(reinterpret_cast<size_t>(p.page));
+          src = static_cast<T>(reinterpret_cast<size_t>(p.interrupt));
           wrt = p.control;
         } else {
           if(p.pending_interrupt)
@@ -328,8 +341,9 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_STPAGEINTCONTROL:
         if(interrupted) {
-          p.page      = static_cast<paging_t*>(dst);
-          p.interrupt = static_cast<T*>(src);
+          // XXX : offset
+          p.page      = static_cast<paging_t*>(reinterpret_cast<void*>(size_t(dst)));
+          p.interrupt = static_cast<T*>(reinterpret_cast<void*>(size_t(src)));
           p.control   = wrt;
         } else {
           if(p.pending_interrupt)
@@ -342,26 +356,26 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
-          // XXX no page guard.
-          mem.cmp(*static_cast<T*>(p.ireg),
-                  *static_cast<T*>(p.ireg + sizeof(T)),
-                  *static_cast<T*>(p.ireg + sizeof(T) * 2),
-                  *static_cast<T*>(p.ireg + sizeof(T) * 3),
-                  *static_cast<T*>(p.ireg + sizeof(T) * 4),
-                  *static_cast<T*>(p.ireg + sizeof(T) * 5));
+          // XXX no page guard, offset.
+          mem.cmp(*static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg))),
+                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T)))),
+                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 2))),
+                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 3))),
+                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 4))),
+                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 5))));
         break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
           // XXX no page guard.
-          mem.nand(*static_cast<T*>(p.ireg),
-                   *static_cast<T*>(p.ireg + sizeof(T)),
-                   *static_cast<T*>(p.ireg + sizeof(T) * 2),
-                   *static_cast<T*>(p.ireg + sizeof(T) * 3),
-                   *static_cast<T*>(p.ireg + sizeof(T) * 4),
-                   *static_cast<T*>(p.ireg + sizeof(T) * 5),
-                   *static_cast<T*>(p.ireg + sizeof(T) * 6));
+          mem.nand(*static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T)))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 2))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 3))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 4))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 5))),
+                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 6))));
         break;
       case OP_NOP:
         break;
