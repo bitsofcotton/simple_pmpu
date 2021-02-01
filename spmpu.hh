@@ -112,8 +112,8 @@ template <typename T> inline SimpleALU<T>::~SimpleALU() {
 template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
   T wrt(0);
   for(int i = 0; i < sizeof(T) * 8; i ++) {
-    wrt = ~ (wrt & (src0 & (1 << i) ? top[i * 8 + 8 * opoff * 2] : 0 ));
-    wrt = ~ (wrt & (src1 & (1 << i) ? top[i * 8 + 8 * (opoff * 2 + 1)] : 0 ));
+    wrt = wrt ^ (src0 & (1 << i) ? top[i * 8 + 8 * opoff * 2] : 0 );
+    wrt = wrt ^ (src1 & (1 << i) ? top[i * 8 + 8 * (opoff * 2 + 1)] : 0 );
   }
   q[q.size() - 1] = make_pair(&dst, wrt);
 }
