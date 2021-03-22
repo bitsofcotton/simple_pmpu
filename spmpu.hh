@@ -4,18 +4,57 @@ using std::vector;
 using std::pair;
 using std::make_pair;
 
+template <typename T, typename U> class Mem {
+public:
+  inline Mem();
+  inline ~Mem();
+  inline const T& read(const T& idx) const;
+  inline void     write(const T& idx, const T& wrt);
+  U m;
+private:
+  int bs;
+  // peripheral:
+};
+
+template <typename T, typename U> inline Mem<T,U>::Mem() {
+  m ^= m;
+  for(bs = 0; T(1) << bs != T(0); bs ++);
+  bs --;
+}
+
+template <typename T, typename U> inline Mem<T,U>::~Mem() {
+  m ^= m;
+}
+
+template <typename T, typename U> inline const T& Mem<T,U>::read(const T& idx) const {
+  if(idx & (T(1) << bs)) {
+    ;
+  }
+  assert(sizeof(T) * idx < sizeof(U));
+  return static_cast<T*>(reinterpret_cast<void*>(&m))[size_t(idx)];
+}
+
+template <typename T, typename U> inline void Mem<T,U>::write(const T& idx, const T& wrt) {
+  if(idx & (T(1) << bs)) {
+    ;
+  }
+  assert(sizeof(T) * idx < sizeof(U));
+  return static_cast<T*>(reinterpret_cast<void*>(&m))[size_t(idx)] = wrt;
+}
+
+
 template <typename T, typename U, int bits> class SimplePMPU {
 public:
   inline SimplePMPU();
   inline ~SimplePMPU();
   inline void nand(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& cond, const T& condoff);
   inline void cmp(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& wrt);
-  U   ireg;
-  int pctr;
+  Mem<T,U> ireg;
+  int      pctr;
 };
 
 template <typename T, typename U, int bits> inline SimplePMPU<T,U,bits>::SimplePMPU() {
-  ireg ^= ireg;
+  ireg.m ^= ireg.m;
   pctr ^= pctr;
 }
 
@@ -29,11 +68,11 @@ template <typename T, typename U, int bits> inline void SimplePMPU<T,U,bits>::na
   assert(0 <= intsize && intsize < blksize);
   static U one(1);
   const auto mask((one << intsize) - one);
-  const auto alu(~ (ireg & (ireg >> (src - dst))));
+  const auto alu(~ (ireg.m & (ireg.m >> (src - dst))));
   for(T i = 0; i < cnt; i ++)
-    if((int(ireg >> (condoff + dst)) & cond) == cond) {
-      ireg &= mask << (i * blksize + dst);
-      ireg |= alu & (mask << (i * blksize + dst));
+    if((int(ireg.m >> (condoff + dst)) & cond) == cond) {
+      ireg.m &= mask << (i * blksize + dst);
+      ireg.m |= alu & (mask << (i * blksize + dst));
     }
   pctr ++;
   return;
@@ -46,12 +85,12 @@ template <typename T, typename U, int bits> inline void SimplePMPU<T,U,bits>::cm
   static U one(1);
   const auto mask((one << intsize) - one);
   for(int i = 0; i < cnt; i ++) {
-    ireg &= ~ (T(15) << (i * blksize + dst + wrt));
-    ireg |= (((ireg & mask) == ((ireg >> (src - dst)) & mask) ?
+    ireg.m &= ~ (T(15) << (i * blksize + dst + wrt));
+    ireg.m |= (((ireg.m & mask) == ((ireg.m >> (src - dst)) & mask) ?
               T(1) : T(2)) |
-             ((ireg & mask) <  ((ireg >> (src - dst)) & mask) ?
+             ((ireg.m & mask) <  ((ireg.m >> (src - dst)) & mask) ?
               T(4) : T(0)) |
-             ((ireg & mask) >  ((ireg >> (src - dst)) & mask) ?
+             ((ireg.m & mask) >  ((ireg.m >> (src - dst)) & mask) ?
               T(8) : T(0))) << (i * blksize + dst + wrt);
   }
   pctr ++;
@@ -59,57 +98,64 @@ template <typename T, typename U, int bits> inline void SimplePMPU<T,U,bits>::cm
 }
 
 
-template <typename T> class SimpleAddr {
+template <typename T, typename U> class MemPage;
+
+template <typename T, typename U> class SimpleAddr {
 public:
-  inline SimpleAddr();
+  inline SimpleAddr(MemPage<T, U>& m);
   inline ~SimpleAddr();
-  inline void write(T& dst, const T& src0, const T& src1);
+  inline void write(const T& dsttop, const T& dstidx, const T& dstaddr, const T& src0, const T& src1, const uint8_t& cond);
   inline void next();
 private:
-  vector<pair<T*, T> > q;
+  vector<pair<T, pair<pair<T, T>, pair<T, uint8_t> > > > q;
+  MemPage<T, U>* m;
 };
 
-template <typename T> inline SimpleAddr<T>::SimpleAddr() {
-  q.resize(sizeof(T) * 8, make_pair(static_cast<T*>(0), T(0)));
+template <typename T, typename U> inline SimpleAddr<T,U>::SimpleAddr(MemPage<T,U>& m) {
+  q.resize(sizeof(T) * 8, make_pair(static_cast<T*>(0), make_pair(T(0), make_pair(T(0), T(0)), make_pair(T(0), 0))));
+  this->m = &m;
 }
 
-template <typename T> inline SimpleAddr<T>::~SimpleAddr() {
+template <typename T, typename U> inline SimpleAddr<T,U>::~SimpleAddr() {
   ;
 }
 
-template <typename T> inline void SimpleAddr<T>::write(T& dst, const T& src0, const T& src1) {
-  q[q.size() - 1] = make_pair(&dst, src0 + src1);
+template <typename T, typename U> inline void SimpleAddr<T,U>::write(const T& dsttop, const T& dstidx, const T& dstaddr, const T& src0, const T& src1, const uint8_t& cond) {
+  q[q.size() - 1] = make_pair(src0 + src1, make_pair(make_pair(dsttop, dstidx), make_pair(dstaddr, cond)));
 }
 
-template <typename T> inline void SimpleAddr<T>::next() {
-  if(q[0].first) *(q[0].first) = q[0].second;
+template <typename T, typename U> inline void SimpleAddr<T,U>::next() {
+  if(q[0].second.first.first)
+    m->write(q[0].second.first.first, q[0].second.first.second, q[0].second.second.first, q[0].first, q[0].second.second.second);
   for(int i = 0; i < q.size() - 1; i ++)
     q[i] = q[i + 1];
-  q[q.size() - 1] = make_pair(static_cast<T*>(0), T(0));
+  q[q.size() - 1] = make_pair(T(0), make_pair(make_pair(T(0), T(0)), make_pair(T(0), 0)));
 }
 
 
-template <typename T> class SimpleALU {
+template <typename T, typename U> class SimpleALU {
 public:
-  inline SimpleALU();
+  inline SimpleALU(MemPage<T,U>& m);
   inline ~SimpleALU();
   inline void write(T& dst, const T& opoff, const T& src0, const T& src1);
   inline void next();
-  T* top;
+  T top;
 private:
   vector<pair<T*, T> > q;
+  MemPage<T,U>* m;
 };
 
-template <typename T> inline SimpleALU<T>::SimpleALU() {
+template <typename T, typename U> inline SimpleALU<T,U>::SimpleALU(MemPage<T,U>& m) {
   q.resize(sizeof(T) * 8, make_pair(static_cast<T*>(0), T(0)));
   top = static_cast<T*>(0);
+  this->m = &m;
 }
 
-template <typename T> inline SimpleALU<T>::~SimpleALU() {
+template <typename T, typename U> inline SimpleALU<T,U>::~SimpleALU() {
   ;
 }
 
-template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
+template <typename T, typename U> inline void SimpleALU<T,U>::write(T& dst, const T& opoff, const T& src0, const T& src1) {
   T wrt(0);
   for(int i = 0; i < sizeof(T) * 8; i ++) {
     wrt = wrt ^ (src0 & (1 << i) ? top[i * 8 + 8 * opoff * 2] : 0 );
@@ -118,7 +164,7 @@ template <typename T> inline void SimpleALU<T>::write(T& dst, const T& opoff, co
   q[q.size() - 1] = make_pair(&dst, wrt);
 }
 
-template <typename T> inline void SimpleALU<T>::next() {
+template <typename T, typename U> inline void SimpleALU<T,U>::next() {
   if(q[0].first) *(q[0].first) = q[0].second;
   for(int i = 0; i < q.size() - 1; i ++)
     q[i] = q[i + 1];
@@ -126,30 +172,67 @@ template <typename T> inline void SimpleALU<T>::next() {
 }
 
 
+template <typename T, typename U> class MemPage {
+public:
+  inline MemPage();
+  inline ~MemPage();
+  inline const T& read(const T& top, const T& idx, const T& addr, const uint8_t& cond) const;
+  inline void     write(const T& top, const T& idx, const T& addr, const T& wrt, const uint8_t& cond) const;
+  typedef enum {
+    READ = 0,
+    WRITE = 1,
+    EXEC  = 2,
+    USER  = 3,
+    INT   = 4,
+    NOWFLUSH = 5,
+    NORFLUSH = 6,
+    NOCACHE  = 7
+  } m_cond_t;
+  typedef struct {
+    uint8_t cond;
+    T rel;
+    T bottom;
+    T top;
+  } paging_t;
+  U m;
+};
+
+template <typename T, typename U> inline MemPage<T,U>::MemPage() {
+  ;
+}
+
+template <typename T, typename U> inline MemPage<T,U>::~MemPage() {
+  ;
+}
+
+template <typename T, typename U> inline const T& MemPage<T,U>::read(const T& top, const T& idx, const T& addr, const uint8_t& cond) const {
+  const auto& pg(reinterpret_cast<const paging_t*>(reinterpret_cast<size_t>(&m.ireg) + sizeof(T) * top));
+  assert((pg[idx].cond & cond) == cond);
+  const auto  midx(pg[idx].rel + addr);
+  assert(pg[idx].bottom <= midx && midx < pg[idx].top);
+  return *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m.ireg) + static_cast<size_t>(midx));
+}
+
+template <typename T, typename U> inline void MemPage<T,U>::write(const T& top, const T& idx, const T& addr, const T& wrt, const uint8_t& cond) const {
+  const auto& pg(reinterpret_cast<const paging_t*>(reinterpret_cast<size_t>(&m.ireg) + sizeof(T) * top));
+  assert((pg[idx].cond & cond) == cond);
+  const auto  midx(pg[idx].rel + addr);
+  assert(pg[idx].bottom <= midx && midx < pg[idx].top);
+  *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m.ireg) + static_cast<size_t>(midx)) = wrt;
+  return;
+}
+
+
 template <typename T, int pages, typename U> class SimpleMPU {
 public:
-  typedef struct {
-    uint8_t r : 1;
-    uint8_t w : 1;
-    uint8_t x : 1;
-    uint8_t u : 1;
-    uint8_t i : 1;
-    uint8_t nowriteflushcache : 1;
-    uint8_t noreadflushcache  : 1;
-    uint8_t nocache : 1;
-    T rel0;
-    T rel1;
-  } paging_t;
   typedef struct {
     T rip;
     T reg;
     T irip;
     T ireg;
     T control;
-    // T interrupt[0x10];
-    // paging_t page[pages];
-    T* interrupt;
-    paging_t *page;
+    T interrupt;
+    T page;
     uint8_t  cond;
     uint8_t  pending_interrupt;
     T pctr;
@@ -205,15 +288,16 @@ public:
   inline ~SimpleMPU();
   inline void process();
   vector<pu_t> pu;
-  vector<SimpleAddr<T> > addr;
-  vector<SimpleALU<T> > alu;
-  vector<SimpleALU<T> > ialu;
-  U   mem;
+  vector<SimpleAddr<T,U> > addr;
+  vector<SimpleALU<T,U> > alu;
+  vector<SimpleALU<T,U> > ialu;
+  MemPage<T, U> mem;
   T   pctr;
+  int psz;
 };
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU() {
-  ;
+  psz = 12;
 }
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU(const int& npu) {
@@ -227,6 +311,7 @@ template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::~Simpl
   ;
 }
 
+// XXX paging addr pipeline isn't counted.
 template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::process() {
   for(int i = 0; i < pu.size(); i ++) {
           auto& p(pu[i]);
@@ -234,43 +319,43 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     p.pctr ++;
     assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
            ((p.cond & (1 << COND_USER)) >> COND_USER));
-    const auto  interrupted(p.cond & (1 << COND_INTERRUPT));
-    // XXX paging, pipeline:
-    const auto& mnemonic(*(static_cast<mnemonic_t*>(reinterpret_cast<void*>(
-      reinterpret_cast<size_t>(&mem) + size_t(interrupted ? p.irip : p.rip)))));
+    const auto interrupted(p.cond & (1 << COND_INTERRUPT));
+    const static auto mnsz((sizeof(mnemonic_t) + sizeof(T) - 1) / sizeof(T));
+    const auto mref(interrupted ? p.irip : p.rip);
+    T mbuf[mnsz];
+    for(int j = 0; j < mnsz; j ++)
+      mbuf[j] = mem.read(p.page, mref >> psz, mref, (1 << MemPage<T,U>::EXEC) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
+    const auto& mnemonic(*reinterpret_cast<mnemonic_t*>(mbuf));
     addr[i].next();
     alu[i].next();
     ialu[i].next();
     if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
     if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
-      const auto  top(reinterpret_cast<size_t>(&mem) + size_t(interrupted ? p.ireg : p.reg));
-      // XXX paging, pipeline:
-      auto& dst0(*(static_cast<T*>(reinterpret_cast<void*>(
-        reinterpret_cast<size_t>(&mem) + top + mnemonic.dst.off * sizeof(T)))));
-      auto& dst(mnemonic.dst.ref ? *(static_cast<T*>(reinterpret_cast<void*>(dst0))) : dst0);
-      auto& src0(*(static_cast<T*>(reinterpret_cast<void*>(
-        reinterpret_cast<size_t>(&mem) + top + mnemonic.src.off * sizeof(T)))));
-      auto& src(mnemonic.src.ref ? *(static_cast<T*>(reinterpret_cast<void*>(src0))) : src0);
-      auto& wrt0(*(static_cast<T*>(reinterpret_cast<void*>(
-        reinterpret_cast<size_t>(&mem) + top + mnemonic.wrt.off * sizeof(T)))));
-      auto& wrt(mnemonic.wrt.ref ? *(static_cast<T*>(reinterpret_cast<void*>(wrt0))) : wrt0);
+      const auto  dst0((interrupted ? p.ireg : p.reg) + mnemonic.dst.off);
+      const auto  src0((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
+      const auto  wrt0((interrupted ? p.ireg : p.reg) + mnemonic.wrt.off);
+      const auto& dst1(mnemonic.dst.ref ? mem.read(p.page, dst0 >> psz, dst0, (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)) | (1 << MemPage<T,U>::READ)) : dst0);
+      const auto& src1(mnemonic.src.ref ? mem.read(p.page, src0 >> psz, src0, (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)) | (1 << MemPage<T,U>::READ)) : dst0);
+      const auto& dst(mem.read(p.page, dst1 >> psz, dst1, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))));
+      const auto& src(mem.read(p.page, src1 >> psz, src1, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))));
+      const auto& pwrt(mnemonic.wrt.ref ? mem.read(p.page, wrt0 >> psz, wrt0, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))) : wrt0);
       if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
         p.pctr += sizeof(T) * 8 * 2;
-        (interrupted ? ialu[i] : alu[i]).top = &wrt;
+        // (interrupted ? ialu[i] : alu[i]).top = mem.read(p.page, pwrt >> psz, pwrt);
         break;
       case OP_OP:
-        (interrupted ? ialu[i] : alu[i]).write(wrt, mnemonic.opidx, dst, src);
+        //(interrupted ? ialu[i] : alu[i]).write(wrt, mnemonic.opidx, dst, src);
         break;
       case OP_NAND:
-        wrt = ~ (dst & src);
+        mem.write(p.page, pwrt >> psz, pwrt, ~ (dst & src), (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         break;
       case OP_PLUS:
-        addr[i].write(wrt, dst, src);
+        addr[i].write(p.page, pwrt >> psz, pwrt, dst, src, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         break;
       case OP_SHIFT:
-        wrt = 0 < src ? dst << src : dst >> - src;
+        mem.write(p.page, pwrt >> psz, pwrt, 0 < src ? dst << src : dst >> - src, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         break;
       case OP_CMP:
         p.cond &= ~ ((1LL << COND_EQUAL)    |
@@ -283,8 +368,8 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
                   (src <  dst ? (1LL << COND_GREATER) : 0);
         break;
       case OP_LDIPREGTOP:
-        wrt = interrupted ? p.irip : p.rip;
-        dst = interrupted ? p.ireg : p.reg;
+        mem.write(p.page, pwrt >> psz, pwrt, interrupted ? p.irip : p.rip, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
+        mem.write(p.page, dst1 >> psz, dst1, interrupted ? p.ireg : p.reg, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         break;
       case OP_STIPREGTOP:
         (interrupted ? p.irip : p.rip) = dst;
@@ -296,22 +381,23 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_INT:
        pint:
-        if(! mnemonic.opidx)
-          p.cond |= (1 << COND_HALT);
-        else if(interrupted) {
-          if(p.pending_interrupt == INT_DBLINT)
-            p.cond |= COND_HALT;
-          else
-            p.pending_interrupt = INT_DBLINT;
-          break;
-        } else {
-          p.irip  = p.interrupt[mnemonic.opidx & 0x0f];
-          p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-          p.pctr += sizeof(T) * 8 * 2;
-        }
-        if(p.pending_interrupt) {
-          p.pending_interrupt = 0;
-          continue;
+        {
+          const auto iidx(p.pending_interrupt ? p.pending_interrupt : mnemonic.opidx);
+          if(! iidx)
+            p.cond |= (1 << COND_HALT);
+          else if(interrupted) {
+            if(iidx == INT_DBLINT)
+              p.cond |= COND_HALT;
+            else
+              p.pending_interrupt = INT_DBLINT;
+            break;
+          } else {
+            p.irip  = p.interrupt + sizeof(T) * (iidx & 0x0f);
+            p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
+            p.pctr += sizeof(T) * 8 * 2;
+          }
+          if(p.pending_interrupt)
+            p.rip -= sizeof(mnemonic_t);
         }
         p.pending_interrupt = 0;
         break;
@@ -328,10 +414,9 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_LDPAGEINTCONTROL:
         if(interrupted) {
-          // XXX offset:
-          dst = static_cast<T>(reinterpret_cast<size_t>(p.page));
-          src = static_cast<T>(reinterpret_cast<size_t>(p.interrupt));
-          wrt = p.control;
+          mem.write(p.page, dst1 >> psz, dst1, p.page, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
+          mem.write(p.page, src1 >> psz, src1, p.interrupt, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
+          mem.write(p.page, pwrt >> psz, pwrt, p.control, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         } else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
@@ -341,10 +426,9 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_STPAGEINTCONTROL:
         if(interrupted) {
-          // XXX : offset
-          p.page      = static_cast<paging_t*>(reinterpret_cast<void*>(size_t(dst)));
-          p.interrupt = static_cast<T*>(reinterpret_cast<void*>(size_t(src)));
-          p.control   = wrt;
+          p.page      = dst;
+          p.interrupt = src;
+          p.control   = mem.read(p.page, pwrt >> psz, pwrt, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         } else {
           if(p.pending_interrupt)
             p.pending_interrupt = INT_DBLINT;
@@ -356,26 +440,24 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
-          // XXX no page guard, offset.
-          mem.cmp(*static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg))),
-                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T)))),
-                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 2))),
-                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 3))),
-                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 4))),
-                  *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 5))));
+          mem.m.cmp(*static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                    *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T), (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                    *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 2, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                    *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 3, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                    *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 4, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                    *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 5, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))) );
         break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
           p.pending_interrupt = INT_INVPRIV;
         else
-          // XXX no page guard.
-          mem.nand(*static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T)))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 2))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 3))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 4))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 5))),
-                   *static_cast<T*>(reinterpret_cast<void*>(size_t(p.ireg + sizeof(T) * 6))));
+          mem.m.nand(*static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T), (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 2, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 3, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 4, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 5, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
+                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 6, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))) );
         break;
       case OP_NOP:
         break;

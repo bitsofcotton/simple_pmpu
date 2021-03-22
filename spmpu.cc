@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstring>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include "ifloat.hh"
 
@@ -24,9 +25,19 @@ typedef SimplePMPU<uint16_t, u16, 65536> pmpu;
 typedef SimpleMPU<uint16_t, 16, pmpu> mpu;
 
 int main(int argc, char* argv[]) {
+  assert(1 < argc);
   mpu p;
+  std::ifstream ifs(argv[1]);
+  if(ifs.fail()) {
+    std::cerr << "Failed to open file." << std::endl;
+    return - 1;
+  }
+  ifs.read(reinterpret_cast<char*>(reinterpret_cast<size_t>(&p.mem.m.ireg)), sizeof(pmpu));;
+  p.mem.m.pctr ^= p.mem.m.pctr;
   // initialize;
-  while(true) p.process();
+  while(true) {
+    p.process();
+  }
   return 0;
 }
 

@@ -1,4 +1,4 @@
-CXX=	xcrun clang++
+CXX=	clang++
 
 # compiler flags.
 CXXFLAGS+=	-std=c++11
