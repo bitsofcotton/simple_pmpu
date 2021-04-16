@@ -1,7 +1,7 @@
 /*
 BSD 3-Clause License
 
-Copyright (c) 2019-2020, bitsofcotton
+Copyright (c) 2019-2021, bitsofcotton
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -28,8 +28,20 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+
+*/
+
 #if !defined(_INTEGER_FLOAT_)
+
+#if !defined(_FLOAT_BITS_)
+  #include <complex>
+  #include <cmath>
+  using namespace std;
+  typedef uint64_t myuint;
+  typedef int64_t  myint;
+  typedef long double myfloat;
+  #define mybits 64
+#else
 
 using std::move;
 using std::max;
@@ -91,10 +103,8 @@ public:
   inline                operator T    () const;
   inline                operator DUInt<T,bits> () const;
 
-/*
-  friend std::ostream&  operator << (std::ostream& os, DUInt<T,bits>  v);
-  friend std::istream&  operator >> (std::istream& is, DUInt<T,bits>& v);
-*/
+  // friend std::ostream&  operator << (std::ostream& os, DUInt<T,bits>  v);
+  // friend std::istream&  operator >> (std::istream& is, DUInt<T,bits>& v);
 
   T e[2];
 };
@@ -518,7 +528,7 @@ template <typename T, int bits> std::ostream& operator << (std::ostream& os, Sig
 template <typename T, typename W, int bits, typename U> class SimpleFloat {
 public:
   inline SimpleFloat();
-  inline SimpleFloat(const T& src);
+  template <typename V> inline SimpleFloat(const V& src);
   inline SimpleFloat(const SimpleFloat<T,W,bits,U>& src);
   inline SimpleFloat(SimpleFloat<T,W,bits,U>&& src);
   inline ~SimpleFloat();
@@ -561,10 +571,8 @@ public:
          SimpleFloat<T,W,bits,U>  atan() const;
   inline SimpleFloat<T,W,bits,U>  sqrt() const;
   
-/*
-  friend std::ostream&    operator << (std::ostream& os, const SimpleFloat<T,W,bits,U>& v);
-  friend std::istream&    operator >> (std::istream& is, SimpleFloat<T,W,bits,U>& v);
-*/
+  // friend std::ostream&    operator << (std::ostream& os, const SimpleFloat<T,W,bits,U>& v);
+  // friend std::istream&    operator >> (std::istream& is, SimpleFloat<T,W,bits,U>& v);
   
   unsigned char s;
   typedef enum {
@@ -598,13 +606,13 @@ template <typename T, typename W, int bits, typename U> inline SimpleFloat<T,W,b
   assert(0 < bits && ! (bits & 1));
 }
 
-template <typename T, typename W, int bits, typename U> inline SimpleFloat<T,W,bits,U>::SimpleFloat(const T& src) {
-  const static T tzero(0);
+template <typename T, typename W, int bits, typename U> template <typename V> inline SimpleFloat<T,W,bits,U>::SimpleFloat(const V& src) {
+  const static V vzero(0);
   s ^= s;
-  m  = src < tzero ? - src : src;
+  m  = T(src < vzero ? - src : src);
   e ^= e;
   s |= safeAdd(e, normalize(m));
-  if(src < tzero)
+  if(src < vzero)
     s |= 1 << SIGN;
   ensureFlag();
 }
@@ -958,8 +966,8 @@ template <typename T, typename W, int bits, typename U> SimpleFloat<T,W,bits,U> 
     }
     return res;
   }
-  const auto& ea(exparray());
-  const auto& iea(invexparray());
+  static const auto& ea(exparray());
+  static const auto& iea(invexparray());
         auto  result(zero());
         auto  work(*this);
   if(one_einv < work) {
@@ -1006,8 +1014,8 @@ template <typename T, typename W, int bits, typename U> SimpleFloat<T,W,bits,U> 
     }
     return res;
   }
-  const auto& en(exparray());
-  const auto& ien(invexparray());
+  static const auto& en(exparray());
+  static const auto& ien(invexparray());
         auto  work(this->abs());
         auto  result(one());
   for(int i = 1; 0 <= i && i < min(en.size(), ien.size()) && work.floor(); i ++, work >>= U(1))
@@ -1229,6 +1237,8 @@ template <typename T, typename W, int bits, typename U> inline SimpleFloat<T,W,b
   // newton's method: 0 == f'(x_n) (x_{n+1} - x_n) + f(x_n)
   //            x_{n+1} := x_n - f(x_n)/f'(x_n).
   //         where f(x) := x_n * x_n - *this
+  if(! res)
+    return res;
   return (res + *this / res) >> U(1);
 }
 
@@ -1349,6 +1359,10 @@ template <typename T, typename W, int bits, typename U> static inline SimpleFloa
 
 template <typename T, typename W, int bits, typename U> static inline SimpleFloat<T,W,bits,U> tan(const SimpleFloat<T,W,bits,U>& src) {
   return src.sin() / src.cos();
+}
+
+template <typename T, typename W, int bits, typename U> static inline SimpleFloat<T,W,bits,U> atan(const SimpleFloat<T,W,bits,U>& src) {
+  return src.atan();
 }
 
 template <typename T, typename W, int bits, typename U> static inline SimpleFloat<T,W,bits,U> atan2(const SimpleFloat<T,W,bits,U>& y, const SimpleFloat<T,W,bits,U>& x) {
@@ -1718,6 +1732,57 @@ template <typename T> static inline Complex<T> csec(const Complex<T>& s) {
 template <typename T> static inline T ccot(const T& s) {
   return Complex<T>(T(1)) / ctan(s);
 }
+
+template <typename T> using complex = Complex<T>;
+
+# if _FLOAT_BITS_ == 8
+  typedef uint8_t myuint;
+  typedef int8_t  myint;
+  typedef SimpleFloat<myuint, uint16_t, 8, int64_t> myfloat;
+  #define mybits 8
+# elif _FLOAT_BITS_ == 16
+  typedef uint16_t myuint;
+  typedef int16_t  myint;
+  typedef SimpleFloat<myuint, uint32_t, 16, int64_t> myfloat;
+  #define mybits 16
+# elif _FLOAT_BITS_ == 32
+  typedef uint32_t myuint;
+  typedef int32_t  myint;
+  typedef SimpleFloat<myuint, uint64_t, 32, int64_t> myfloat;
+  #define mybits 32
+# elif _FLOAT_BITS_ == 64
+  typedef uint64_t myuint;
+  typedef int64_t  myint;
+  typedef SimpleFloat<myuint, DUInt<myuint, 64>, 64, int64_t> myfloat;
+  #define mybits 64
+# elif _FLOAT_BITS_ == 128
+  typedef DUInt<uint64_t, 64> uint128_t;
+  typedef Signed<uint128_t, 128> int128_t;
+  typedef uint128_t myuint;
+  typedef int128_t  myint;
+  typedef SimpleFloat<myuint, DUInt<myuint, 128>, 128, int64_t> myfloat;
+  #define mybits 128
+# elif _FLOAT_BITS_ == 256
+  typedef DUInt<uint64_t, 64> uint128_t;
+  typedef DUInt<uint128_t, 128> uint256_t;
+  typedef Signed<uint256_t, 128> int256_t;
+  typedef uint256_t myuint;
+  typedef int256_t  myint;
+  typedef SimpleFloat<myuint, DUInt<myuint, 256>, 256, int64_t> myfloat;
+  #define mybits 256
+# elif _FLOAT_BITS_ == 512
+  typedef DUInt<uint64_t, 64> uint128_t;
+  typedef DUInt<uint128_t, 128> uint256_t;
+  typedef DUInt<uint256_t, 128> int256_t;
+  typedef Signed<uint512_t, 128> int1024_t;
+  typedef uint512_t myuint;
+  typedef int512_t  myint;
+  typedef SimpleFloat<myuint, DUInt<myuint, 512>, 512, int64_t> myfloat;
+  #define mybits 256
+# else
+#   error cannot handle float
+# endif
+#endif
 
 #define _INTEGER_FLOAT_
 #endif
