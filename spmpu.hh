@@ -233,8 +233,8 @@ public:
     T control;
     T interrupt;
     T page;
-    uint8_t  cond;
-    uint8_t  pending_interrupt;
+    uint8_t cond;
+    T pending_interrupt;
     T pctr;
   } pu_t;
   typedef enum {
@@ -263,13 +263,14 @@ public:
     OP_LDPAGEINTCONTROL = 12,
     OP_CALLPCMP  = 13,
     OP_CALLPNAND = 14,
-    OP_NOP    = 15
+    OP_JMPREL = 15
   } op_e;
   typedef enum {
-    INT_HALT    = 0,
-    INT_INVPRIV = 1,
-    INT_PGFLT   = 2,
-    INT_DBLINT  = 3
+    INT_DBLINT    = 0,
+    INT_INVPRIV   = 1,
+    INT_MPU_START = 2,
+    INT_USER      = sizeof(T) * 8 - 2,
+    INT_HALT      = sizeof(T) * 8 - 1,
   } interrupt_e;
   typedef struct {
     uint8_t off : 7;
@@ -294,6 +295,8 @@ public:
   MemPage<T, U> mem;
   T   pctr;
   int psz;
+  
+  uint8_t countLSBset(const T& pending) const;
 };
 
 template <typename T, int pages, typename U> inline SimpleMPU<T,pages,U>::SimpleMPU() {
@@ -329,17 +332,22 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
     addr[i].next();
     alu[i].next();
     ialu[i].next();
-    if((p.cond & (1 << COND_HALT)) && mnemonic.op != OP_INT) continue;
-    if((mnemonic.cond & p.cond) == mnemonic.cond || p.pending_interrupt) {
+    if(p.pending_interrupt && ! interrupted) {
+      const auto pirip(p.interrupt + sizeof(T) * countLSBset(p.pending_interrupt));
+      p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
+      p.irip  = mem.read(p.page, pirip >> psz, pirip, (1 << MemPage<T,U>::INT) | (1 << MemPage<T,U>::EXEC));
+      p.pctr += sizeof(T) * 8 * 2;
+    }
+    if(p.cond & (1 << COND_HALT)) continue;
+    if((mnemonic.cond & p.cond) == mnemonic.cond) {
       const auto  dst0((interrupted ? p.ireg : p.reg) + mnemonic.dst.off);
       const auto  src0((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
       const auto  wrt0((interrupted ? p.ireg : p.reg) + mnemonic.wrt.off);
       const auto& dst1(mnemonic.dst.ref ? mem.read(p.page, dst0 >> psz, dst0, (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)) | (1 << MemPage<T,U>::READ)) : dst0);
-      const auto& src1(mnemonic.src.ref ? mem.read(p.page, src0 >> psz, src0, (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)) | (1 << MemPage<T,U>::READ)) : dst0);
+      const auto& src1(mnemonic.src.ref ? mem.read(p.page, src0 >> psz, src0, (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)) | (1 << MemPage<T,U>::READ)) : src0);
       const auto& dst(mem.read(p.page, dst1 >> psz, dst1, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))));
       const auto& src(mem.read(p.page, src1 >> psz, src1, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))));
       const auto& pwrt(mnemonic.wrt.ref ? mem.read(p.page, wrt0 >> psz, wrt0, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER))) : wrt0);
-      if(p.pending_interrupt) goto pint;
       switch(mnemonic.op & 0x0f) {
       case OP_LDOPTOP:
         p.pctr += sizeof(T) * 8 * 2;
@@ -380,65 +388,34 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         p.reg = src;
         break;
       case OP_INT:
-       pint:
-        {
-          const auto iidx(p.pending_interrupt ? p.pending_interrupt : mnemonic.opidx);
-          if(! iidx)
-            p.cond |= (1 << COND_HALT);
-          else if(interrupted) {
-            if(iidx == INT_DBLINT)
-              p.cond |= COND_HALT;
-            else
-              p.pending_interrupt = INT_DBLINT;
-            break;
-          } else {
-            p.irip  = p.interrupt + sizeof(T) * (iidx & 0x0f);
-            p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-            p.pctr += sizeof(T) * 8 * 2;
-          }
-          if(p.pending_interrupt)
-            p.rip -= sizeof(mnemonic_t);
-        }
-        p.pending_interrupt = 0;
+        p.pending_interrupt |= T(1) << (mnemonic.opidx == INT_USER || mnemonic.opidx == INT_HALT ? mnemonic.opidx : INT_INVPRIV);
         break;
       case OP_IRET:
         if(interrupted) {
           p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
           p.pctr += sizeof(T) * 8 * 2;
-        } else {
-          if(p.pending_interrupt)
-            p.pending_interrupt = INT_DBLINT;
-          else
-            p.pending_interrupt = INT_INVPRIV;
-        }
+        } else
+          p.pending_interrupt |= T(1) << INT_INVPRIV;
         break;
       case OP_LDPAGEINTCONTROL:
         if(interrupted) {
           mem.write(p.page, dst1 >> psz, dst1, p.page, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
           mem.write(p.page, src1 >> psz, src1, p.interrupt, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
           mem.write(p.page, pwrt >> psz, pwrt, p.control, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
-        } else {
-          if(p.pending_interrupt)
-            p.pending_interrupt = INT_DBLINT;
-          else
-            p.pending_interrupt = INT_INVPRIV;
-        }
+        } else
+          p.pending_interrupt |= T(1) << INT_INVPRIV;
         break;
       case OP_STPAGEINTCONTROL:
         if(interrupted) {
           p.page      = dst;
           p.interrupt = src;
           p.control   = mem.read(p.page, pwrt >> psz, pwrt, (1 << MemPage<T,U>::READ) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
-        } else {
-          if(p.pending_interrupt)
-            p.pending_interrupt = INT_DBLINT;
-          else
-            p.pending_interrupt = INT_INVPRIV;
-        }
+        } else
+          p.pending_interrupt |= T(1) << INT_INVPRIV;
         break;
       case OP_CALLPCMP:
         if(i || ! interrupted)
-          p.pending_interrupt = INT_INVPRIV;
+          p.pending_interrupt |= T(1) << INT_INVPRIV;
         else
           mem.m.cmp(*static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T), (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
@@ -449,7 +426,7 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
         break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
-          p.pending_interrupt = INT_INVPRIV;
+          p.pending_interrupt |= T(1) << INT_INVPRIV;
         else
           mem.m.nand(*static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T), (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
@@ -459,7 +436,8 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 5, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 6, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))) );
         break;
-      case OP_NOP:
+      case OP_JMPREL:
+        (interrupted ? p.irip : p.rip) += dst;
         break;
       default:
         assert(0 && "Should not be reached.");;
@@ -469,6 +447,13 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
   }
   pctr ++;
   return;
+}
+
+template <typename T, int pages, typename U> uint8_t SimpleMPU<T,pages,U>::countLSBset(const T& pending) const {
+  for(int i = 0; i < sizeof(T) * 8; i ++)
+    if((i && (pending & (T(1) << i))) || (! i && (pending & T(1))))
+      return i;
+  return sizeof(T) * 8;
 }
 
 #define _SIMPLE_MPU_

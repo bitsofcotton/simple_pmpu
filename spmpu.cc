@@ -5,8 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include "ifloat.hh"
-
+#include <assert.h>
 #include "ifloat.hh"
 #include "spmpu.hh"
 
