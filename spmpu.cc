@@ -5,8 +5,10 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <sstream>
+#include <map>
 #include <assert.h>
-#include "ifloat.hh"
+#include "lieonn.hh"
 #include "spmpu.hh"
 
 typedef DUInt<uint64_t, 64> u7;

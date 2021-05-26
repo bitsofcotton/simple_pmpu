@@ -254,15 +254,15 @@ public:
     OP_PLUS   = 3,
     OP_SHIFT  = 4,
     OP_CMP    = 5,
-    OP_LDIPREGTOP  = 6,
-    OP_STIPREGTOP  = 7,
-    OP_STUIPREGTOP = 8,
-    OP_INT    = 9,
-    OP_IRET   = 10,
-    OP_STPAGEINTCONTROL = 11,
-    OP_LDPAGEINTCONTROL = 12,
-    OP_CALLPCMP  = 13,
-    OP_CALLPNAND = 14,
+    OP_LDIPREGTOP = 6,
+    OP_STIPREGTOP = 7,
+    OP_INT    = 8,
+    OP_IRET   = 9,
+    OP_STPAGEINTCONTROL = 10,
+    OP_LDPAGEINTCONTROL = 11,
+    OP_CALLPCMP   = 12,
+    OP_CALLPNAND  = 13,
+    OP_BMOV   = 14,
     OP_JMPREL = 15
   } op_e;
   typedef enum {
@@ -376,16 +376,14 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
                   (src <  dst ? (1LL << COND_GREATER) : 0);
         break;
       case OP_LDIPREGTOP:
+        // operand high bit means interrupted. not now.
         mem.write(p.page, pwrt >> psz, pwrt, interrupted ? p.irip : p.rip, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         mem.write(p.page, dst1 >> psz, dst1, interrupted ? p.ireg : p.reg, (1 << MemPage<T,U>::WRITE) | (1 << (interrupted ? MemPage<T,U>::INT : MemPage<T,U>::USER)));
         break;
       case OP_STIPREGTOP:
+        // operand high bit means interrupted. not now.
         (interrupted ? p.irip : p.rip) = dst;
         (interrupted ? p.ireg : p.reg) = src;
-        break;
-      case OP_STUIPREGTOP:
-        p.rip = dst;
-        p.reg = src;
         break;
       case OP_INT:
         p.pending_interrupt |= T(1) << (mnemonic.opidx == INT_USER || mnemonic.opidx == INT_HALT ? mnemonic.opidx : INT_INVPRIV);
@@ -423,7 +421,6 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 3, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 4, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                     *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 5, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))) );
-        break;
       case OP_CALLPNAND:
         if(i || ! interrupted)
           p.pending_interrupt |= T(1) << INT_INVPRIV;
@@ -435,6 +432,9 @@ template <typename T, int pages, typename U> inline void SimpleMPU<T,pages,U>::p
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 4, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 5, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))),
                      *static_cast<T*>(reinterpret_cast<void*>(size_t(mem.read(p.page, p.ireg >> psz, p.ireg + sizeof(T) * 6, (1 << MemPage<T,U>::READ) | (1 << MemPage<T,U>::WRITE) | (1 << MemPage<T,U>::INT))))) );
+        break;
+      case OP_BMOV:
+        // block move.
         break;
       case OP_JMPREL:
         (interrupted ? p.irip : p.rip) += dst;
