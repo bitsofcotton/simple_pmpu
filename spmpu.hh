@@ -278,6 +278,7 @@ public:
     uint8_t cond;
     T pending_interrupt;
     T pctr;
+    T dblint;
   } pu_t;
   typedef enum {
     COND_USER      = 0,
@@ -367,8 +368,14 @@ public:
         p.pctr += sizeof(T) * 8 * 2;
         continue;
       } else if((p.pending_interrupt & INT_DBLINT) && interrupted) {
-        // XXX stub (double interrupt):
-        ;
+        if(p.dblint != T(0)) {
+          p.pending_interrupt ^= p.pending_interrupt;
+          p.pending_interrupt |= T(1) << INT_HALT;
+          p.cond |= 1 << COND_HALT;
+        } else
+          p.dblint = p.irip;
+        p.pctr += sizeof(T) * 8 * 2;
+        continue;
       } else if(p.cond & (1 << COND_HALT)) ;
       else if((mnemonic.cond & p.cond) == mnemonic.cond) {
         const auto psrc((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
@@ -524,7 +531,11 @@ public:
           break;
         case OP_IRET:
           if(interrupted) {
-            p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
+            if(p.dblint != T(0)) {
+              p.rip = p.dblint;
+              p.dblint = T(0);
+            } else
+              p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
             p.pctr += sizeof(T) * 8 * 2;
           } else
             p.pending_interrupt |= invpriv;
