@@ -8,3 +8,6 @@ At least, arm license for condition operations.
 And it might be bmov and bzero implementation on mpu
 had be patented.
 
+# Not tested
+These sources are not tested. And, There exists cacheline
+glitch on this implementation.
