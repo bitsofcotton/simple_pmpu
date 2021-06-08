@@ -289,8 +289,11 @@ public:
   }
   inline SimpleMPU(const int& npu) {
     pu.resize(npu);
+    bop.resize(npu, make_pair(T(0), T(0)));
+    bsize.resize(npu, T(0));
     mem = Mem<T, U, psize>(npu);
-    // initialize ?? or bzero() ed??
+    T mmsb(1);
+    while(bool(mmsb)) { msb = mmsb; mmsb <<= 1; }
   }
   inline ~SimpleMPU() {
     ;
@@ -323,7 +326,7 @@ public:
         continue;
       } else if((p.pending_interrupt & INT_DBLINT) && interrupted) {
         // double interrupt;
-      } else if(p.cond & (1 << COND_HALT)) continue;
+      } else if(p.cond & (1 << COND_HALT)) ;
       else if((mnemonic.cond & p.cond) == mnemonic.cond) {
         const auto psrc((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
         const auto pdst((interrupted ? p.ireg : p.reg) + mnemonic.dst.off);
@@ -400,11 +403,67 @@ public:
             minterrupted | (1 << Mem<T, U, psize>::READ),
             mnemonic.wrt.ref ? p.ireg : p.reg, invpriv);
           break;
+        // XXX : memory cache, best case.
         case OP_BMOV:
           // block move stub.
+          if(bop[i].first == T(0) && bop[i].second == T(0) && bsize[i] == T(0)) {
+            bop[i].first  = src;
+            bop[i].second = dst;
+            p.pending_interrupt |= rsrc | rdst |
+              mem.read(i, pwrt, mnemonic.wrt.ref,
+                minterrupted | (1 << Mem<T, U, psize>::READ),
+                bsize[i], invpriv);
+            if(bsize[i] & msb)
+              bop[i].first = bop[i].second = bsize[i] = T(0);
+          }
+          if(bop[i].first == T(0) && bop[i].second == T(0) && bsize[i] == T(0))
+            break;
+          // src -> dst, src + size, dst + size should not be vanished.
+          if(bop[i].second < bop[i].first + bsize[i]) {
+            T buf(0);
+            p.pending_interrupt |= mem.read(i,
+              bop[i].first + bsize[i] - sizeof(T), false,
+              minterrupted, buf, invpriv);
+            p.pending_interrupt |= mem.write(i,
+              bop[i].second + bsize[i] - sizeof(T), false,
+              minterrupted, buf, invpriv);
+          } else {
+            T buf(0);
+            p.pending_interrupt |= mem.read(i, bop[i].first, false,
+              minterrupted, buf, invpriv);
+            p.pending_interrupt |= mem.write(i, bop[i].second, false,
+              minterrupted, buf, invpriv);
+            bop[i].first  += sizeof(T);
+            bop[i].second += sizeof(T);
+          }
+          bsize[i] -= sizeof(T);
+          if(bsize[i] == T(0) || bsize[i] & msb) {
+            bop[i].first = bop[i].second = bsize[i] = T(0);
+            break;
+          }
+          p.rip -= sizeof(mnemonic_t);
           break;
+        // XXX : memory cache, best case.
         case OP_BZERO:
-          // block zero stub.
+          if(bop[i].first == T(0) && bop[i].second == T(0)) {
+            bop[i].first  = src;
+            bop[i].second = dst;
+            p.pending_interrupt |= rsrc | rdst;
+          }
+          if(bop[i].first == T(0) && bop[i].second == T(0)) break;
+          if(bop[i].second < bop[i].first) {
+            bop[i].first = bop[i].second = T(0);
+            p.pending_interrupt |= invpriv;
+            break;
+          }
+          p.pending_interrupt |= mem.write(i, bop[i].first, false,
+            minterrupted, T(0), invpriv);
+          bop[i].first += sizeof(T);
+          if(bop[i].second <= bop[i].first) {
+            bop[i].first = bop[i].second = T(0);
+            break;
+          }
+          p.rip -= sizeof(mnemonic_t);
           break;
         case OP_JMPREL:
           if(rdst)
@@ -480,8 +539,11 @@ public:
     return sizeof(T) * 8;
   }
   vector<pu_t> pu;
+  vector<pair<T, T> > bop;
+  vector<T> bsize;
   Mem<T, U, psize> mem;
   T pctr;
+  T msb;
 };
 
 #define _SIMPLE_MPU_
