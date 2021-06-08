@@ -22,6 +22,29 @@ public:
     T bottom;
     T top;
   } paging_t;
+  typedef struct {
+    T dst;
+    T src;
+    T wrt;
+    bool rdst;
+    bool rsrc;
+    bool rwrt;
+    T minterrupted;
+    T invpriv;
+    T (*op)(const T&, const T&);
+  } lazy_t;
+  typedef struct {
+    T dst;
+    T src;
+    T wrt;
+    bool rdst;
+    bool rsrc;
+    bool rwrt;
+    T* opop;
+    T minterrupted;
+    T invpriv;
+    T (*op)(const T&, const T&, T[]);
+  } lazyop_t;
   inline Mem() {
     ;
   }
@@ -30,57 +53,126 @@ public:
     pctr ^= pctr;
     for(bs = 0; T(1) << bs != T(0); bs ++);
     bs --;
-    lazy.resize(ncpu);
+    vector<lazy_t> lc0;
+    lc0.resize();
+    lazy.resize(ncpu, lc0);
     ptop.resize(ncpu, T(0));
+    c_read  = T(1) << READ;
+    c_write = T(1) << WRITE;
   }
   inline ~Mem() {
     ;
   }
-  inline const T& read(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref) const {
-    if(addr & (T(1) << bs)) {
-      ;
-    }
+  inline T read(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref, T& rd, const T& invpriv) const {
     const auto& pg(*reinterpret_cast<const paging_t*>(static_cast<size_t>(ptop[pidx]) + sizeof(paging_t) * (addr >> (bs - psize))));
     assert(pg.cond & NOCACHE);
-    if((pg.cond & cond) != cond) {
-      // throw invpriv.
-      ;
-    }
+    if((pg.cond & cond) != cond)
+      return invpriv;
     const auto  midx(pg.rel + addr);
-    if(! (pg.bottom <= midx && midx < pg.top)) {
-      // throw invpriv.
-      ;
-    }
+    if(! (pg.bottom <= midx && midx < pg.top))
+      return invpriv;
     if(ref)
-      return read(pidx, midx, cond, false);
-    return *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx));
+      return read(pidx, midx, cond, false, rd, invpriv);
+    if(addr & (T(1) << bs)) {
+      ;
+    } else
+      rd = *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx));
+    return 0;
   }
-  inline void     write(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref, const T& wrt) {
-    if(addr & (T(1) << bs)) {
-      ;
-    }
+  inline T write(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref, const T& wrt, const T& invpriv) {
     const auto& pg(*reinterpret_cast<const paging_t*>(static_cast<size_t>(ptop[pidx]) + sizeof(paging_t) * (addr >> (bs - psize))));
     assert(pg.cond & NOCACHE);
-    if((pg.cond & cond) != (cond | (1 << WRITE))) {
-      // throw invpriv.
-      ;
-    }
+    if((pg.cond & cond) != (cond | (1 << WRITE)))
+      return invpriv;
     const auto  midx(pg.rel + addr);
-    if(! (pg.bottom <= midx && midx < pg.top)) {
-      // throw invpriv.
-      ;
-    }
+    if(! (pg.bottom <= midx && midx < pg.top))
+      return invpriv;
     if(ref)
-      write(pidx, midx, cond, false, wrt);
-    else
-      *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx)) = wrt;
+      write(pidx, midx, cond, false, wrt, invpriv);
+    else {
+      if(addr & (T(1) << bs)) {
+        ;
+      } else
+        *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx)) = wrt;
+    }
+    return 0;
+  }
+  inline void lazyOp(const T& core, const T& src, const bool& rsrc, const T& dst, const bool& rdst, const T& wrt, const bool& rwrt, const T& minterrupted, const T& invpriv, T (*op)(const T& x, const T& y)) {
+    assert(0 <= core && core < lazy.size());
+    auto& last(lazy[core][lazy[core].size() - 1]);
+    last.src     = src;
+    last.rsrc    = rsrc;
+    last.dst     = dst;
+    last.rdst    = rdst;
+    last.wrt     = wrt;
+    last.rwrt    = rwrt;
+    last.minterrupted = minterrupted;
+    last.invpriv = invpriv;
+    last.op      = op;
     return;
   }
-  inline void     lazyOp(const T& src, const T& dst, const T& wrt, void (*op)(const T& x, const T& y)) {
-    ;
+  inline void lazyOpOp(const T& core, const T& src, const bool& rsrc, const T& dst, const bool& rdst, const T& wrt, const bool& rwrt, const T& minterrupted, const T& invpriv, T opop[], T (*op)(const T& x, const T& y, T opop[])) {
+    assert(0 <= core && core < lazy.size());
+    auto& last(lazyop[core][lazy[core].size() - 1]);
+    last.src     = src;
+    last.rsrc    = rsrc;
+    last.dst     = dst;
+    last.rdst    = rdst;
+    last.wrt     = wrt;
+    last.rwrt    = rwrt;
+    last.minterrupted = minterrupted;
+    last.invpriv = invpriv;
+    last.opop    = opop;
+    last.op      = op;
+    return;
   }
-  inline void     lazyNext() {
-    ;
+  // XXX : cache timing is broken implementation on this (worst case).
+  inline T lazyNext(const T& core) {
+    assert(0 <= core && core < lazy.size());
+    const auto& lc0(lazy[core][0]);
+    T res(0);
+    T src;
+    T dst;
+    T wrt(0);
+    res |= read(core, lc0.src, lc0.rsrc, lc0.minterrupted | c_read, src, lc0.invpriv);
+    if(res) goto ensure;
+    res |= read(core, lc0.dst, lc0.rdst, lc0.minterrupted | c_read, dst, lc0.invpriv);
+    if(res) goto ensure;
+    wrt  = lc0.op(src, dst);
+    res |= write(core, lc0.wrt, lc0.wrt, lc0.minterrupted | c_write, wrt, lc0.invpriv);
+   ensure:
+    lazy[core].erase(lazy[core].begin());
+    static const lazy_t back = {.dst = T(0), .src = T(0), .wrt = T(0),
+      .rdst = false, .rsrc = false, .rwrt = false,
+      .minterrupted = T(0), .invpriv = T(0),
+      .op = (T (*)(const T&, const T&))(void*)0} ;
+    lazy[core].emplace_back(back);
+    return res;
+  }
+  inline T lazyNextOp(const T& core) {
+    assert(0 <= core && core < lazy.size());
+    const auto& lc0(lazy[core][0]);
+    T res(0);
+    T src;
+    T dst;
+    T wrt(0);
+    res |= read(core, lc0.src, lc0.rsrc, lc0.minterrupted | c_read, src, lc0.invpriv);
+    if(res) goto ensure;
+    res |= read(core, lc0.dst, lc0.rdst, lc0.minterrupted | c_read, dst, lc0.invpriv);
+    if(res) goto ensure;
+    for(int i = 0; i < 16; i ++)
+      res |= read(core, lc0.opop + T(i) * T(sizeof(T)), false, lc0.minterrupted | (T(1) << EXEC), wrt, lc0.invpriv);
+    if(res) goto ensure;
+    wrt  = lc0.op(src, dst, lc0.opop);
+    res |= write(core, lc0.wrt, lc0.wrt, lc0.minterrupted | c_write, wrt, lc0.invpriv);
+   ensure:
+    lazyop[core].erase(lazyop[core].begin());
+    static const lazyop_t back = {.dst = T(0), .src = T(0), .wrt = T(0),
+      .rdst = false, .rsrc = false, .rwrt = false,
+      .minterrupted = T(0), .invpriv = T(0), .opop = (const T*)0,
+      .op = (T (*)(const T&, const T&, T[]))(void*)0 } ;
+    lazyop[core].emplace_back(back);
+    return res;
   }
   inline void nand(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& cond, const T& condoff) {
     assert(0 <= dst && dst < blksize && 0 <= condoff && condoff < blksize &&
@@ -119,8 +211,11 @@ public:
 private:
   int bs;
   int pctr;
-  vector<vector<pair<pair<T, T>, pair<T, T (*)(const T&, const T&)> > > > lazy;
+  vector<vector<lazy_t> > lazy;
+  vector<vector<lazyop_t> > lazyop;
   vector<T> ptop;
+  T   c_read;
+  T   c_write;
 
   // peripheral:
 };
@@ -208,46 +303,73 @@ public:
       assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
              ((p.cond & (1 << COND_USER)) >> COND_USER));
       const auto interrupted(p.cond & (1 << COND_INTERRUPT));
-      const static auto mnsz((sizeof(mnemonic_t) + sizeof(T) - 1) / sizeof(T));
       const auto minterrupted(1 << (interrupted ? Mem<T,U,psize>::INT : Mem<T,U,psize>::USER));
       const auto mref(interrupted ? p.irip : p.rip);
+      const static auto mnsz((sizeof(mnemonic_t) + sizeof(T) - 1) / sizeof(T));
+      const static auto invpriv(T(1) << (interrupted ? INT_DBLINT : INT_INVPRIV));
       T mbuf[mnsz];
       for(int j = 0; j < mnsz; j ++)
-        mbuf[j] = mem.read(i, mref, false, (1 << Mem<T, U, psize>::EXEC) | minterrupted);
+        p.pending_interrupt |= mem.read(i, mref, false,
+          minterrupted | (1 << Mem<T, U, psize>::EXEC),
+          mbuf[j], invpriv);
       const auto& mnemonic(*reinterpret_cast<mnemonic_t*>(mbuf));
       if(p.pending_interrupt && ! interrupted) {
         const auto pirip(p.interrupt + sizeof(T) * countLSBset(p.pending_interrupt));
         p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-        p.irip  = mem.read(i, pirip, false, (1 << Mem<T, U, psize>::INT) | (1 << Mem<T, U, psize>::EXEC));
+        p.pending_interrupt |= mem.read(i, pirip, false,
+          (1 << Mem<T, U, psize>::INT) | (1 << Mem<T, U, psize>::EXEC),
+          p.irip, INT_DBLINT);
         p.pctr += sizeof(T) * 8 * 2;
         continue;
+      } else if((p.pending_interrupt & INT_DBLINT) && interrupted) {
+        // double interrupt;
       } else if(p.cond & (1 << COND_HALT)) continue;
       else if((mnemonic.cond & p.cond) == mnemonic.cond) {
         const auto psrc((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
         const auto pdst((interrupted ? p.ireg : p.reg) + mnemonic.dst.off);
         const auto pwrt((interrupted ? p.ireg : p.reg) + mnemonic.wrt.off);
-        const auto src(mem.read(i, psrc, mnemonic.src.ref, minterrupted | (1 << Mem<T, U, psize>::READ)));
-        const auto dst(mem.read(i, pdst, mnemonic.dst.ref, minterrupted | (1 << Mem<T, U, psize>::READ)));
+        T src;
+        T dst;
+        const auto rsrc(mem.read(i, psrc, mnemonic.src.ref, minterrupted | (1 << Mem<T, U, psize>::READ), src, invpriv));
+        const auto rdst(mem.read(i, pdst, mnemonic.dst.ref, minterrupted | (1 << Mem<T, U, psize>::READ), dst, invpriv));
         switch(mnemonic.op & 0x0f) {
         case OP_LDOP:
           p.pctr += sizeof(T) * 8 * 2;
-          (interrupted ? p.iop : p.op) = mem.read(i, psrc, mnemonic.src.ref, minterrupted | (1 << Mem<T, U, psize>::EXEC));
+          p.pending_interrupt |= mem.read(i, psrc, mnemonic.src.ref,
+            minterrupted | (1 << Mem<T, U, psize>::EXEC),
+            interrupted ? p.iop : p.op, invpriv);
           break;
         case OP_OP:
-          //(interrupted ? ialu[i] : alu[i]).write(wrt, mnemonic.opidx, dst, src);
-          // stub: wrt := op * [src dst]
+          mem.lazyOpOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
+            pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
+            &((reinterpret_cast<T*>(interrupted ? p.iop : p.op))[16 * mnemonic.opidx]),
+            [](const T& src, const T& dst, T opop[]) -> T {
+              T res(0);
+              for(int i = 0; i < sizeof(T) * 8; i ++) 
+                if(int(i ? (src >> i) : src) & 1)
+                  res ^= opop[i];
+              for(int i = 0; i < sizeof(T) * 8; i ++)
+                if(int(i ? (dst >> i) : dst) & 1)
+                  res ^= opop[i + sizeof(T) * 8];
+              return res;
+            });
           break;
         case OP_NAND:
-          // mem.lazyOp(i, , lambda);
-          // stub: wrt := ~ (dst & src).
+          mem.lazyOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
+            pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
+            [](const T& src, const T& dst) -> T { return ~ (src & dst); });
           break;
         case OP_PLUS:
-          // mem.lazyOp(i, , lambda);
-          // stub: wrt := dst + src.
+          mem.lazyOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
+            pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
+            [](const T& src, const T& dst) -> T { return src + dst; });
           break;
         case OP_SHIFT:
-          // mem.lazyOp(i, , lambda);
-          // stub: wrt := dst << src.
+          mem.lazyOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
+            pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
+            [](const T& src, const T& dst) -> T {
+              return dst == 0 ? src : (dst < 0 ? src >> (- dst): src << dst);
+            });
           break;
         case OP_CMP:
           p.cond &= ~ ((1LL << COND_EQUAL)    |
@@ -258,21 +380,25 @@ public:
                                 : (1LL << COND_NOTEQUAL))    |
                     (dst <  src ? (1LL << COND_LESSER)  : 0) |
                     (src <  dst ? (1LL << COND_GREATER) : 0);
+          p.pending_interrupt |= rsrc | rdst;
           break;
         case OP_LDIPREG:
-          mem.write(i, pwrt, false, minterrupted,
-            (mnemonic.wrt.ref ? p.irip : p.rip));
-          mem.write(i, pdst, false, minterrupted,
-            (mnemonic.dst.ref ? p.ireg : p.reg));
+          p.pending_interrupt |= mem.write(i, pwrt, false, minterrupted,
+            mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
+          p.pending_interrupt |= mem.write(i, pdst, false, minterrupted,
+            mnemonic.dst.ref ? p.ireg : p.reg, invpriv);
           break;
         case OP_STIPREG:
           if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
-            // invpriv:
+            p.pending_interrupt |= invpriv;
+            break;
           }
-          (mnemonic.wrt.ref ? p.irip : p.rip) =
-            mem.read(i, pwrt, false, minterrupted | (1 << Mem<T, U, psize>::READ));
-          (mnemonic.wrt.ref ? p.ireg : p.reg) =
-            mem.read(i, pdst, false, minterrupted | (1 << Mem<T, U, psize>::READ));
+          p.pending_interrupt |= mem.read(i, pwrt, false,
+            minterrupted | (1 << Mem<T, U, psize>::READ),
+            mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
+          p.pending_interrupt |= mem.read(i, pdst, false,
+            minterrupted | (1 << Mem<T, U, psize>::READ),
+            mnemonic.wrt.ref ? p.ireg : p.reg, invpriv);
           break;
         case OP_BMOV:
           // block move stub.
@@ -281,37 +407,58 @@ public:
           // block zero stub.
           break;
         case OP_JMPREL:
-          (interrupted ? p.irip : p.rip) += dst;
+          if(rdst)
+            p.pending_interrupt |= rdst;
+          else
+            (interrupted ? p.irip : p.rip) += dst;
           break;
         case OP_INT:
-          p.pending_interrupt |= T(1) << (mnemonic.opidx == INT_USER || mnemonic.opidx == INT_HALT ? mnemonic.opidx : INT_INVPRIV);
+          if(interrupted)
+            p.pending_interrupt |=
+              T(1) << (INT_MPU_START <= mnemonic.opidx 
+                       ? mnemonic.opidx : invpriv);
+          else
+            p.pending_interrupt |=
+              T(1) << (INT_USER <= mnemonic.opidx == INT_USER
+                       ? mnemonic.opidx : invpriv);
           break;
         case OP_IRET:
           if(interrupted) {
             p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
             p.pctr += sizeof(T) * 8 * 2;
           } else
-            p.pending_interrupt |= T(1) << INT_INVPRIV;
+            p.pending_interrupt |= invpriv;
           break;
         case OP_LDPAGEINTCONTROL:
           if(interrupted) {
-            mem.write(i, pwrt, mnemonic.wrt.ref, minterrupted, p.control);
-            mem.write(i, pdst, mnemonic.dst.ref, minterrupted, p.page);
-            mem.write(i, psrc, mnemonic.src.ref, minterrupted, p.interrupt);
+            p.pending_interrupt |= mem.write(i, pwrt, mnemonic.wrt.ref,
+              minterrupted, p.control, invpriv);
+            p.pending_interrupt |= mem.write(i, pdst, mnemonic.dst.ref,
+              minterrupted, p.page, invpriv);
+            p.pending_interrupt |= mem.write(i, psrc, mnemonic.src.ref,
+              minterrupted, p.interrupt, invpriv);
           } else
-            p.pending_interrupt |= T(1) << INT_INVPRIV;
+            p.pending_interrupt |= invpriv;
           break;
         case OP_STPAGEINTCONTROL:
           if(interrupted) {
-            p.control   = mem.read(i, pwrt, mnemonic.wrt.ref, (1 << Mem<T, U, psize>::READ) | minterrupted);
-            p.page      = dst;
-            p.interrupt = src;
+            p.pending_interrupt |= mem.read(i, pwrt, mnemonic.wrt.ref,
+              minterrupted | (1 << Mem<T, U, psize>::READ),
+              p.control, invpriv);
+            if(rdst)
+              p.pending_interrupt |= rdst;
+            else
+              p.page      = dst;
+            if(rsrc)
+              p.pending_interrupt |= rsrc;
+            else
+              p.interrupt = src;
           } else
-            p.pending_interrupt |= T(1) << INT_INVPRIV;
+            p.pending_interrupt |= invpriv;
           break;
         case OP_CALLPARA:
           if(i || ! interrupted)
-            p.pending_interrupt |= T(1) << INT_INVPRIV;
+            p.pending_interrupt |= invpriv;
           else
             // para call stub:
             ;
@@ -321,9 +468,9 @@ public:
         }
       }
       p.rip += sizeof(mnemonic_t);
+      p.pending_interrupt |= mem.lazyNext(i);
     }
     pctr ++;
-    mem.lazyNext();
     return;
   }
   uint8_t countLSBset(const T& pending) const {
