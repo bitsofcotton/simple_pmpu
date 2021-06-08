@@ -40,7 +40,7 @@ public:
     bool rdst;
     bool rsrc;
     bool rwrt;
-    T* opop;
+    T opop;
     T minterrupted;
     T invpriv;
     T (*op)(const T&, const T&, T[]);
@@ -54,8 +54,11 @@ public:
     for(bs = 0; T(1) << bs != T(0); bs ++);
     bs --;
     vector<lazy_t> lc0;
-    lc0.resize();
+    lc0.resize(sizeof(T) * 8);
     lazy.resize(ncpu, lc0);
+    vector<lazyop_t> loc0;
+    loc0.resize(sizeof(T) * 8 + sizeof(T) * 16);
+    lazyop.resize(ncpu, loc0);
     ptop.resize(ncpu, T(0));
     c_read  = T(1) << READ;
     c_write = T(1) << WRITE;
@@ -111,7 +114,7 @@ public:
     last.op      = op;
     return;
   }
-  inline void lazyOpOp(const T& core, const T& src, const bool& rsrc, const T& dst, const bool& rdst, const T& wrt, const bool& rwrt, const T& minterrupted, const T& invpriv, T opop[], T (*op)(const T& x, const T& y, T opop[])) {
+  inline void lazyOpOp(const T& core, const T& src, const bool& rsrc, const T& dst, const bool& rdst, const T& wrt, const bool& rwrt, const T& minterrupted, const T& invpriv, T opop, T (*op)(const T& x, const T& y, T opop[])) {
     assert(0 <= core && core < lazy.size());
     auto& last(lazyop[core][lazy[core].size() - 1]);
     last.src     = src;
@@ -151,7 +154,7 @@ public:
   }
   inline T lazyNextOp(const T& core) {
     assert(0 <= core && core < lazy.size());
-    const auto& lc0(lazy[core][0]);
+    const auto& lc0(lazyop[core][0]);
     T res(0);
     T src;
     T dst;
@@ -161,20 +164,21 @@ public:
     res |= read(core, lc0.dst, lc0.rdst, lc0.minterrupted | c_read, dst, lc0.invpriv);
     if(res) goto ensure;
     for(int i = 0; i < 16; i ++)
-      res |= read(core, lc0.opop + T(i) * T(sizeof(T)), false, lc0.minterrupted | (T(1) << EXEC), wrt, lc0.invpriv);
+      res |= read(core, lc0.opop + T(i * sizeof(T) * 16 * sizeof(T)), false, lc0.minterrupted | (T(1) << EXEC), wrt, lc0.invpriv);
     if(res) goto ensure;
-    wrt  = lc0.op(src, dst, lc0.opop);
+    wrt  = lc0.op(src, dst, reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(lc0.opop)));
     res |= write(core, lc0.wrt, lc0.wrt, lc0.minterrupted | c_write, wrt, lc0.invpriv);
    ensure:
     lazyop[core].erase(lazyop[core].begin());
     static const lazyop_t back = {.dst = T(0), .src = T(0), .wrt = T(0),
       .rdst = false, .rsrc = false, .rwrt = false,
-      .minterrupted = T(0), .invpriv = T(0), .opop = (const T*)0,
+      .opop = T(0), .minterrupted = T(0), .invpriv = T(0),
       .op = (T (*)(const T&, const T&, T[]))(void*)0 } ;
     lazyop[core].emplace_back(back);
     return res;
   }
-  inline void nand(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& cond, const T& condoff) {
+  inline void nand(const T& vaddr) {
+/*
     assert(0 <= dst && dst < blksize && 0 <= condoff && condoff < blksize &&
            0 < blksize && 0 < cnt);
     assert(0 <= intsize && intsize < blksize);
@@ -186,10 +190,12 @@ public:
         m &= mask << (i * blksize + dst);
         m |= alu & (mask << (i * blksize + dst));
       }
+*/
     pctr ++;
     return;
   }
-  inline void cmp(const T& dst, const T& src, const T& blksize, const T& cnt, const T& intsize, const T& wrt) {
+  inline void cmp(const T& vaddr) {
+/*
     assert(0 <= dst && dst < blksize &&
            0 < blksize && 0 < cnt);
     assert(0 <= intsize && intsize < blksize);
@@ -204,6 +210,7 @@ public:
                ((m & mask) >  ((m >> (src - dst)) & mask) ?
                 T(8) : T(0))) << (i * blksize + dst + wrt);
     }
+*/
     pctr ++;
     return;
   }
@@ -325,7 +332,8 @@ public:
         p.pctr += sizeof(T) * 8 * 2;
         continue;
       } else if((p.pending_interrupt & INT_DBLINT) && interrupted) {
-        // double interrupt;
+        // XXX stub (double interrupt):
+        ;
       } else if(p.cond & (1 << COND_HALT)) ;
       else if((mnemonic.cond & p.cond) == mnemonic.cond) {
         const auto psrc((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
@@ -345,7 +353,7 @@ public:
         case OP_OP:
           mem.lazyOpOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
             pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
-            &((reinterpret_cast<T*>(interrupted ? p.iop : p.op))[16 * mnemonic.opidx]),
+            T((interrupted ? p.iop : p.op) + sizeof(T) * 16 * mnemonic.opidx),
             [](const T& src, const T& dst, T opop[]) -> T {
               T res(0);
               for(int i = 0; i < sizeof(T) * 8; i ++) 
@@ -405,7 +413,6 @@ public:
           break;
         // XXX : memory cache, best case.
         case OP_BMOV:
-          // block move stub.
           if(bop[i].first == T(0) && bop[i].second == T(0) && bsize[i] == T(0)) {
             bop[i].first  = src;
             bop[i].second = dst;
@@ -418,7 +425,6 @@ public:
           }
           if(bop[i].first == T(0) && bop[i].second == T(0) && bsize[i] == T(0))
             break;
-          // src -> dst, src + size, dst + size should not be vanished.
           if(bop[i].second < bop[i].first + bsize[i]) {
             T buf(0);
             p.pending_interrupt |= mem.read(i,
@@ -516,11 +522,25 @@ public:
             p.pending_interrupt |= invpriv;
           break;
         case OP_CALLPARA:
-          if(i || ! interrupted)
+          if(i || ! interrupted ||
+            mnemonic.wrt.off != T(0) ||
+            mnemonic.wrt.ref != T(0) ||
+            ! ((mnemonic.src.off == T(0) && mnemonic.src.ref == T(0)) ||
+               (mnemonic.dst.off == T(0) && mnemonic.dst.ref == T(0))) ||
+            (mnemonic.src.off == T(0) && mnemonic.src.ref == T(0) &&
+             mnemonic.dst.off == T(0) && mnemonic.dst.ref == T(0)) )
             p.pending_interrupt |= invpriv;
-          else
-            // para call stub:
-            ;
+          else if(mnemonic.src.off == T(0) && mnemonic.src.ref == T(0)) {
+            if(rsrc)
+              p.pending_interrupt |= rsrc;
+            else
+              mem.nand(src);
+          } else {
+            if(rdst)
+              p.pending_interrupt |= rdst;
+            else
+              mem.cmp(dst);
+          }
           break;
         default:
           assert(0 && "Should not be reached.");;
@@ -528,6 +548,7 @@ public:
       }
       p.rip += sizeof(mnemonic_t);
       p.pending_interrupt |= mem.lazyNext(i);
+      p.pending_interrupt |= mem.lazyNextOp(i);
     }
     pctr ++;
     return;
