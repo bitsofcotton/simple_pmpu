@@ -373,13 +373,18 @@ public:
           p.irip, INT_DBLINT);
         p.pctr += sizeof(T) * 8 * 2;
         continue;
-      } else if((p.pending_interrupt & INT_DBLINT) && interrupted) {
+      } else if((p.pending_interrupt & (T(1) << INT_DBLINT)) && interrupted) {
         if(p.dblint != T(0)) {
           p.pending_interrupt ^= p.pending_interrupt;
           p.pending_interrupt |= T(1) << INT_HALT;
           p.cond |= 1 << COND_HALT;
-        } else
+        } else {
           p.dblint = p.irip;
+          p.pending_interrupt |= mem.read(i, p.interrupt, false,
+            (1 << Mem<T, U, psize>::INT) | (1 << Mem<T, U, psize>::EXEC),
+            p.irip, INT_DBLINT);
+          p.pending_interrupt &= ~ (T(1) << INT_DBLINT);
+        }
         p.pctr += sizeof(T) * 8 * 2;
         continue;
       } else if(p.cond & (1 << COND_HALT)) ;
