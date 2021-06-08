@@ -20,9 +20,15 @@ typedef DUInt<u11, 2048>  u12;
 typedef DUInt<u12, 4096>  u13;
 typedef DUInt<u13, 8192>  u14;
 typedef DUInt<u14, 16384> u15;
-typedef DUInt<u15, 32768> u16;
+typedef DUInt<u15, 32768> u16; // 64k
+typedef DUInt<u16, 65536> u17;
+typedef DUInt<u17, 131072> u18;
+typedef DUInt<u18, 262144> u19;
+typedef DUInt<u19, 514288> u20; // 1m
+typedef DUInt<u20, 1048576> u21;
+typedef DUInt<u21, 2097152> u22;
 
-typedef SimpleMPU<uint16_t, 16, Mem<uint16_t, u16, 16> > mpu;
+typedef SimpleMPU<uint32_t, u22, 12> mpu;
 
 int main(int argc, char* argv[]) {
   assert(1 < argc);

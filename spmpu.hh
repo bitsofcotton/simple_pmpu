@@ -66,7 +66,7 @@ public:
   inline ~Mem() {
     ;
   }
-  inline T read(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref, T& rd, const T& invpriv) const {
+  inline T read(const int& pidx, const T& addr, const bool& ref, const uint8_t& cond, T& rd, const T& invpriv) const {
     const auto& pg(*reinterpret_cast<const paging_t*>(static_cast<size_t>(ptop[pidx]) + sizeof(paging_t) * (addr >> (bs - psize))));
     assert(pg.cond & NOCACHE);
     if((pg.cond & cond) != cond)
@@ -75,14 +75,15 @@ public:
     if(! (pg.bottom <= midx && midx < pg.top))
       return invpriv;
     if(ref)
-      return read(pidx, midx, cond, false, rd, invpriv);
-    if(addr & (T(1) << bs)) {
+      return read(pidx, midx, false, cond, rd, invpriv);
+    if(addr & (T(1) << (bs + 1))) {
+      // XXX: peripherals here:
       ;
     } else
       rd = *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx));
     return 0;
   }
-  inline T write(const int& pidx, const T& addr, const uint8_t& cond, const bool& ref, const T& wrt, const T& invpriv) {
+  inline T write(const int& pidx, const T& addr, const bool& ref, const uint8_t& cond, const T& wrt, const T& invpriv) {
     const auto& pg(*reinterpret_cast<const paging_t*>(static_cast<size_t>(ptop[pidx]) + sizeof(paging_t) * (addr >> (bs - psize))));
     assert(pg.cond & NOCACHE);
     if((pg.cond & cond) != (cond | (1 << WRITE)))
@@ -91,9 +92,10 @@ public:
     if(! (pg.bottom <= midx && midx < pg.top))
       return invpriv;
     if(ref)
-      write(pidx, midx, cond, false, wrt, invpriv);
+      write(pidx, midx, false, cond, wrt, invpriv);
     else {
-      if(addr & (T(1) << bs)) {
+      if(addr & (T(1) << (bs + 1))) {
+        // XXX: peripherals here.
         ;
       } else
         *reinterpret_cast<T*>(reinterpret_cast<size_t>(&m) + static_cast<size_t>(midx)) = wrt;
@@ -177,42 +179,72 @@ public:
     lazyop[core].emplace_back(back);
     return res;
   }
-  inline void nand(const T& vaddr) {
-/*
-    assert(0 <= dst && dst < blksize && 0 <= condoff && condoff < blksize &&
-           0 < blksize && 0 < cnt);
-    assert(0 <= intsize && intsize < blksize);
+  inline T nand(const T& vaddr, const T& invpriv) {
+    T dst;
+    T src;
+    T wrt;
+    T intsize;
+    T blksize;
+    T condoff;
+    T cnt;
+    T res(0);
+    const auto cond((1 << INT) | (1 << READ));
+    res |= read(0, vaddr, false, cond, dst, invpriv);
+    res |= read(0, vaddr + sizeof(T), false, cond, src, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 2, false, cond, wrt, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 3, false, cond, intsize, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 4, false, cond, blksize, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 5, false, cond, condoff, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 6, false, cond, cnt, invpriv);
+    if(res) return res;
+    // XXX: around condoff:
+    assert(T(0) <= dst && dst < blksize &&
+           T(0) < blksize && T(0) < cnt &&
+           T(0) <= intsize && intsize < blksize);
     static U one(1);
-    const auto mask((one << intsize) - one);
-    const auto alu(~ (m & (m >> (src - dst))));
+    const auto mask((one << int(intsize)) - one);
+    const auto alu(~ (m & (m >> int(src - dst))));
     for(T i = 0; i < cnt; i ++)
-      if((int(m >> (condoff + dst)) & cond) == cond) {
-        m &= mask << (i * blksize + dst);
-        m |= alu & (mask << (i * blksize + dst));
+      if((int(m >> int(condoff + dst)) & cond) == cond) {
+        m &= mask << int(i * blksize + dst);
+        m |= alu & (mask << int(i * blksize + dst));
       }
-*/
     pctr ++;
-    return;
+    return res;
   }
-  inline void cmp(const T& vaddr) {
-/*
-    assert(0 <= dst && dst < blksize &&
-           0 < blksize && 0 < cnt);
-    assert(0 <= intsize && intsize < blksize);
+  inline T cmp(const T& vaddr, const T& invpriv) {
+    T dst;
+    T src;
+    T wrt;
+    T intsize;
+    T blksize;
+    T cnt;
+    T res(0);
+    const auto cond((1 << INT) | (1 << READ));
+    res |= read(0, vaddr, false, cond, dst, invpriv);
+    res |= read(0, vaddr + sizeof(T), false, cond, src, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 2, false, cond, wrt, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 3, false, cond, intsize, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 4, false, cond, blksize, invpriv);
+    res |= read(0, vaddr + sizeof(T) * 5, false, cond, cnt, invpriv);
+    if(res) return res;
+    assert(T(0) <= dst && dst < blksize &&
+           T(0) < blksize && T(0) < cnt &&
+           T(0) <= intsize && intsize < blksize);
     static U one(1);
-    const auto mask((one << intsize) - one);
+    const auto mask((one << int(intsize)) - one);
     for(int i = 0; i < cnt; i ++) {
-      m &= ~ (T(15) << (i * blksize + dst + wrt));
-      m |= (((m & mask) == ((m >> (src - dst)) & mask) ?
+      const auto work((((m & mask) == ((m >> int(src - dst)) & mask) ?
                 T(1) : T(2)) |
-               ((m & mask) <  ((m >> (src - dst)) & mask) ?
+               ((m & mask) <  ((m >> int(src - dst)) & mask) ?
                 T(4) : T(0)) |
-               ((m & mask) >  ((m >> (src - dst)) & mask) ?
-                T(8) : T(0))) << (i * blksize + dst + wrt);
+               ((m & mask) >  ((m >> int(src - dst)) & mask) ?
+                T(8) : T(0))) << (i * blksize + dst + wrt));
+      m &= ~ (mask << int(i * blksize + dst + wrt));
+      m |= work;
     }
-*/
     pctr ++;
-    return;
+    return res;
   }
   U   m;
 private:
@@ -225,10 +257,13 @@ private:
   T   c_write;
 
   // peripheral:
+  // disk i/o (pipe/disk), video i/o, audio i/o, network i/o
+  // on shadow memory.
+  // in hardware, we have to make i/o map by hands or protocols.
 };
 
 
-template <typename T, int psize, typename U> class SimpleMPU {
+template <typename T, typename U, int psize> class SimpleMPU {
 public:
   typedef struct {
     T rip;
@@ -531,15 +566,15 @@ public:
              mnemonic.dst.off == T(0) && mnemonic.dst.ref == T(0)) )
             p.pending_interrupt |= invpriv;
           else if(mnemonic.src.off == T(0) && mnemonic.src.ref == T(0)) {
-            if(rsrc)
-              p.pending_interrupt |= rsrc;
-            else
-              mem.nand(src);
-          } else {
             if(rdst)
               p.pending_interrupt |= rdst;
             else
-              mem.cmp(dst);
+              p.pending_interrupt |= mem.nand(dst, invpriv);
+          } else {
+            if(rsrc)
+              p.pending_interrupt |= rsrc;
+            else
+              p.pending_interrupt |= mem.cmp(src, invpriv);
           }
           break;
         default:
