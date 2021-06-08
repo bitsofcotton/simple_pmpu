@@ -197,10 +197,13 @@ public:
     res |= read(0, vaddr + sizeof(T) * 5, false, cond, condoff, invpriv);
     res |= read(0, vaddr + sizeof(T) * 6, false, cond, cnt, invpriv);
     if(res) return res;
-    // XXX: around condoff:
-    assert(T(0) <= dst && dst < blksize &&
-           T(0) < blksize && T(0) < cnt &&
-           T(0) <= intsize && intsize < blksize);
+    if(!(T(0) <= dst && dst < blksize &&
+         T(0) <= src && src < blksize &&
+         T(0) <= wrt && wrt < blksize &&
+         T(0) <= condoff && condoff < blksize &&
+         T(0) < blksize && T(0) < cnt &&
+         T(0) <= intsize && intsize < blksize) )
+      return res |= invpriv;
     static U one(1);
     const auto mask((one << int(intsize)) - one);
     const auto alu(~ (m & (m >> int(src - dst))));
@@ -228,9 +231,12 @@ public:
     res |= read(0, vaddr + sizeof(T) * 4, false, cond, blksize, invpriv);
     res |= read(0, vaddr + sizeof(T) * 5, false, cond, cnt, invpriv);
     if(res) return res;
-    assert(T(0) <= dst && dst < blksize &&
-           T(0) < blksize && T(0) < cnt &&
-           T(0) <= intsize && intsize < blksize);
+    if(!(T(0) <= dst && dst < blksize &&
+         T(0) <= src && src < blksize &&
+         T(0) <= wrt && wrt < blksize &&
+         T(0) < blksize && T(0) < cnt &&
+         T(0) <= intsize && intsize < blksize) )
+      return res |= invpriv;
     static U one(1);
     const auto mask((one << int(intsize)) - one);
     for(int i = 0; i < cnt; i ++) {
