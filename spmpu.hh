@@ -353,7 +353,7 @@ public:
         case OP_OP:
           mem.lazyOpOp(i, psrc, mnemonic.src.ref, pdst, mnemonic.dst.ref,
             pwrt, mnemonic.wrt.ref, minterrupted, invpriv,
-            T((interrupted ? p.iop : p.op) + sizeof(T) * 16 * mnemonic.opidx),
+            T((interrupted ? p.iop : p.op) + sizeof(T) * 16 * sizeof(T) * mnemonic.opidx),
             [](const T& src, const T& dst, T opop[]) -> T {
               T res(0);
               for(int i = 0; i < sizeof(T) * 8; i ++) 
