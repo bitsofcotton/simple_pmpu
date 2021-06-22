@@ -39,9 +39,7 @@ int main(int argc, char* argv[]) {
     return - 1;
   }
   ifs.read(reinterpret_cast<char*>(reinterpret_cast<size_t>(&p.mem.m)), sizeof(u16));
-  while(true) {
-    p.process();
-  }
+  while(true) p.process();
   return 0;
 }
 
