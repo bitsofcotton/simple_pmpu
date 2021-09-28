@@ -2177,7 +2177,7 @@ template <typename T> std::istream& operator >> (std::istream& is, SimpleVector<
   int i(0);
   for( ; i < v.size() && ! is.eof() && ! is.bad(); ) {
     const auto c(is.get());
-    if(c == ' ' || c == '\t' || c == '[' || c == ',' || c == ']' || c == '\n') continue;
+    if(c == ' ' || c == '\t' || c == ':' || c == ',' || c == '[' || c == '\n') continue;
     is.unget();
     is >> v[i ++];
   }
