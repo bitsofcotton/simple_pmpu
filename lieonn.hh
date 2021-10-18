@@ -2250,7 +2250,7 @@ public:
   inline       SimpleMatrix<T>  QR() const;
   inline       SimpleMatrix<T>  SVD() const;
   inline       pair<pair<SimpleMatrix<T>, SimpleMatrix<T> >, SimpleMatrix<T> > SVD(const SimpleMatrix<T>& src) const;
-  inline       SimpleVector<T>  innerFix(const SimpleMatrix<T>& A, vector<pair<T, int> >& fidx);
+  inline       SimpleVector<T>  zeroFix(const SimpleMatrix<T>& A, vector<pair<T, int> > fidx);
   inline       SimpleVector<T>  inner(const SimpleVector<T>& bl, const SimpleVector<T>& bu) const;
   template <typename U> inline SimpleMatrix<U> real() const;
   template <typename U> inline SimpleMatrix<U> imag() const;
@@ -2591,6 +2591,7 @@ template <typename T> inline T SimpleMatrix<T>::determinant() const {
     swap(work.entity[i], work.entity[xchg]);
     const auto& ei(work.entity[i]);
     const auto& eii(ei[i]);
+    det *= eii;
     if(epsilon * ei.dot(ei) < eii * eii) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static, 1)
@@ -2600,7 +2601,6 @@ template <typename T> inline T SimpleMatrix<T>::determinant() const {
         work.entity[j] -= ei * ratio;
       }
     }
-    det *= eii;
   }
   return det;
 }
@@ -2863,7 +2863,7 @@ template <typename T> inline void SimpleMatrix<T>::resize(const int& rows, const
   return;
 }
 
-template <typename T> inline SimpleVector<T> SimpleMatrix<T>::innerFix(const SimpleMatrix<T>& A, vector<pair<T, int> >& fidx) {
+template <typename T> inline SimpleVector<T> SimpleMatrix<T>::zeroFix(const SimpleMatrix<T>& A, vector<pair<T, int> > fidx) {
   // N.B. we now have |[A -bb] [x t]| <= 1 condition.
   // N.B. there's no difference |[A - bb] [x t]|^2 <= 1 condition in this.
   //      but not with mixed condition.
@@ -2873,8 +2873,10 @@ template <typename T> inline SimpleVector<T> SimpleMatrix<T>::innerFix(const Sim
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static, 1)
 #endif
-  for(int i = 0; i < fidx.size(); i ++)
-    one[fidx[i].second] = T(int(0));
+  for(int i = 0; i < fidx.size(); i ++) {
+    one[fidx[i].second] = - fidx[i].first;
+    fidx[i].first = - T(int(1));
+  }
   // we now have: Q [R [x t] ] <= {0, 1}^m cond.
   const auto on(projectionPt(one));
   fidx.reserve(fidx.size() + this->cols());
@@ -2904,30 +2906,25 @@ template <typename T> inline SimpleVector<T> SimpleMatrix<T>::innerFix(const Sim
 template <typename T> inline SimpleVector<T> SimpleMatrix<T>::inner(const SimpleVector<T>& bl, const SimpleVector<T>& bu) const {
   assert(this->rows() == bl.size() && this->rows() == bu.size() &&
          0 < this->cols() && 0 < this->rows() && this->cols() < this->rows());
-  // bu - bb == A, bl - bb == - A <=> bu - bl == 2 A. 
-  const auto bb((bu + bl) / T(int(2)));
-  const auto upper(bu - bb);
+  // |(2 / bu) A x - 1 - bl / bu| <= |1 - bl / bu|
+  // <=> with (-A, -bu, -bl), |bl| <= |bu|, |(2 / bu) A x - 2| <= 2(1 - bl / bu)
+  auto bU(bu);
+  auto bL(bl);
   SimpleMatrix<T> A(*this);
   vector<pair<T, int> > fidx;
-  fidx.reserve(this->rows());
-  for(int i = 0; i < this->rows(); i ++) {
-    assert(T(int(0)) <= upper[i]);
-    if(upper[i] == T(int(0))) {
-      const auto n2(A.row(i).dot(A.row(i)));
-      if(n2 != T(int(0))) {
-        fidx.emplace_back(make_pair(- T(int(1)), i));
-        A.row(i) /= sqrt(n2);
-      } else
-        A.row(i) *= n2;
-    } else
-      A.row(i) /= upper[i];
+  for(int i = 0; i < bU.size(); i ++) {
+    if(abs(bu[i]) < abs(bl[i])) {
+      bU[i] = - bl[i];
+      bL[i] = - bu[i];
+      A.row(i) = - this->row(i);
+    } else if(bu[i] == bl[i])
+      fidx.emplace_back(make_pair(- T(int(bu[i] == T(0) ? 0 : 1)), i));
+    assert(bL[i] <= bU[i] && abs(bL[i]) <= abs(bU[i]));
+    A.row(i) /= T(2) * bU[i] - bL[i];
     assert(isfinite(A.row(i).dot(A.row(i))));
   }
-  // N.B. we now have |[A -bb] [x t]| <= 1 condition.
-  // N.B. there's no difference |[A -bb] [x t]|^2 <= 1 condition in this.
-  //      but not with mixed condition.
-  // N.B. we don't matter signs on [A -bb] [x t].
-  return A.QR().innerFix(A, fidx);
+  // N.B. in zeroFix, we get linear Invariant s.t. |Ax| <= 1 possible enough.
+  return A.QR().zeroFix(A, fidx);
 }
 
 template <typename T> std::ostream& operator << (std::ostream& os, const SimpleMatrix<T>& v) {
@@ -3068,9 +3065,9 @@ template <typename T> std::istream& operator >> (std::istream& is, SimpleMatrix<
   return is;
 }
 
-template <typename T> static inline SimpleMatrix<T> log(const SimpleMatrix<T>& m, const int& cut = 200) {
+template <typename T> static inline SimpleMatrix<T> log(const SimpleMatrix<T>& m, const int& cut = 20) {
   SimpleMatrix<T> res(m.rows(), m.cols());
-  const auto c(m.determinant() * T(20));
+  const auto c(abs(m.determinant() * T(20)));
   const auto residue(SimpleMatrix<T>(m.rows(), m.cols()).I() - m / c);
         auto buf(residue);
   res.I(c);
@@ -3231,17 +3228,16 @@ template <typename T> static inline SimpleVector<T> taylor(const int& size, cons
 
 template <typename T> static inline SimpleVector<T> linearInvariant(const SimpleMatrix<T>& in) {
   vector<pair<T, int> > sute;
-  return in.QR().innerFix(in, sute);
+  return in.QR().zeroFix(in, sute);
 }
 
 // N.B. please refer bitsofcotton/randtools.
 template <typename T> static inline pair<SimpleVector<T>, T> makeProgramInvariant(const SimpleVector<T>& in, const T& index = - T(int(1))) {
-  SimpleVector<T> res(in.size() + (T(int(0)) <= index ? 3 : 2));
+  SimpleVector<T> res(in.size() + (T(int(0)) <= index ? 2 : 1));
   res.setVector(0, in);
   res[in.size()] = T(int(1));
   if(T(int(0)) <= index)
     res[in.size() + 1] = T(index);
-  res[res.size() - 1] = T(int(0));
   T   lsum(0);
   for(int i = 0; i < res.size() - 1; i ++) {
     assert(- T(int(1)) <= res[i] && res[i] <= T(int(1)));
@@ -3252,7 +3248,6 @@ template <typename T> static inline pair<SimpleVector<T>, T> makeProgramInvarian
   // N.B. x_1 ... x_n == 1.
   // <=> x_1 / (x_1 ... x_n)^(1/n) ... == 1.
   if(lsum != T(int(0))) res /= ratio = exp(lsum / T(res.size() - 1));
-  res[res.size() - 1] = T(int(1));
   return make_pair(res, ratio);
 }
 
@@ -3302,14 +3297,23 @@ private:
   feeder f;
 };
 
-template <typename T, typename feeder> class linearFeeder {
+template <typename T, typename feeder> class deltaFeeder {
 public:
-  inline linearFeeder() { full = false; }
-  inline linearFeeder(const int& size) { f = feeder(size); full = false; }
-  inline ~linearFeeder() { ; }
+  inline deltaFeeder() { full = false; }
+  inline deltaFeeder(const int& size) {
+    f = feeder(size);
+    res.resize(size);
+    res.O();
+    full = false;
+  }
+  inline ~deltaFeeder() { ; }
   inline const SimpleVector<T>& next(const T& in) {
-    res  = f.next(in);
+    const auto& buf(f.next(in));
+    assert(buf.size() == res.size());
     full = f.full;
+    res[0] = T(int(0));
+    for(int i = 1; i < res.size(); i ++)
+      res[i] = buf[i] - buf[i - 1];
     return res;
   }
   SimpleVector<T> res;
@@ -3342,6 +3346,35 @@ private:
   feeder f;
 };
 
+template <typename T, typename pred> class shrinkMatrix {
+public:
+  inline shrinkMatrix() { ; }
+  inline shrinkMatrix(pred&& p, const int& len) {
+    d.resize(abs(len));
+    m.resize(abs(len));
+    this->p = p;
+  }
+  inline ~shrinkMatrix() { ; }
+  inline T next(const T& in) {
+    T res(0);
+    for(int i = 1; i < d.size(); i ++) d[i - 1] = move(d[i]);
+    d[d.size() - 1] = in;
+    if(t ++ < d.size()) return res;
+    auto D(d[0]);
+    for(int i = 1; i < d.size(); i ++) D += d[i];
+    for(int i = 1; i < m.size(); i ++) m[i - 1] = move(m[i]);
+    m[m.size() - 1] = p.next(D) - (D - d[0]);
+    if(t <= d.size() + m.size()) return res;
+    for(int i = 0; i < m.size(); i ++)
+      res += m[i];
+    return res /= T(m.size());
+  }
+private:
+  int t;
+  vector<T> d;
+  vector<T> m;
+  pred p;
+};
 
 template <typename T> const T& sgn(const T& x) {
   static const T zero(0);

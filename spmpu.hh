@@ -144,7 +144,7 @@ public:
     res |= read(core, lc0.dst, lc0.rdst, lc0.minterrupted | c_read, dst, lc0.invpriv);
     if(res) goto ensure;
     wrt  = lc0.op(src, dst);
-    res |= write(core, lc0.wrt, lc0.wrt, lc0.minterrupted | c_write, wrt, lc0.invpriv);
+    res |= write(core, lc0.wrt, lc0.rwrt, lc0.minterrupted | c_write, wrt, lc0.invpriv);
    ensure:
     lazy[core].erase(lazy[core].begin());
     static const lazy_t back = {.dst = T(0), .src = T(0), .wrt = T(0),
@@ -441,6 +441,10 @@ public:
                       (src <  dst ? (1LL << COND_GREATER) : 0);
             p.pending_interrupt |= rsrc | rdst;
           } else if((mnemonic.op & 0x0f) == OP_LDIPREG) {
+            if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
+              p.pending_interrupt |= invpriv;
+              break;
+            }
             p.pending_interrupt |= mem.write(i, pwrt, false, minterrupted,
               mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
             p.pending_interrupt |= mem.write(i, pdst, false, minterrupted,
