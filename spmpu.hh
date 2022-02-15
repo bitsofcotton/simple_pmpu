@@ -312,6 +312,10 @@ public:
     OP_STIPREG = 12,
     OP_LDPAGEINTCONTROL = 13,
     OP_STPAGEINTCONTROL = 14,
+    // N.B. if we work with (memsize)^2.25 core and base system,
+    //      we can replace this mnemonic with permutation
+    //      they intends the security matter with mnemonic permutation table
+    //      and addr xor table.
     OP_CALLPARA = 15
   } op_e;
   typedef enum {
