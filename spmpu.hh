@@ -308,14 +308,10 @@ public:
     OP_JMPREL = 8,
     OP_INT  = 9,
     OP_IRET = 10,
-    OP_LDIPREG = 11,
-    OP_STIPREG = 12,
+    OP_LDIPREGCRYPT = 11,
+    OP_STIPREGCRYPT = 12,
     OP_LDPAGEINTCONTROL = 13,
     OP_STPAGEINTCONTROL = 14,
-    // N.B. if we work with (memsize)^2.25 core and base system,
-    //      we can replace this mnemonic with permutation
-    //      they intends the security matter with mnemonic permutation table
-    //      and addr xor table.
     OP_CALLPARA = 15
   } op_e;
   typedef enum {
@@ -454,7 +450,7 @@ public:
                     (src <  dst ? (1LL << COND_GREATER) : 0);
           p.pending_interrupt |= rsrc | rdst;
           break;
-        case OP_LDIPREG:
+        case OP_LDIPREGCRYPT:
           if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
             p.pending_interrupt |= invpriv;
             break;
@@ -463,8 +459,9 @@ public:
             mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
           p.pending_interrupt |= mem.write(i, pdst, false, minterrupted,
             mnemonic.dst.ref ? p.ireg : p.reg, invpriv);
+          // cryption:
           break;
-        case OP_STIPREG:
+        case OP_STIPREGCRYPT:
           if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
             p.pending_interrupt |= invpriv;
             break;
@@ -475,6 +472,7 @@ public:
           p.pending_interrupt |= mem.read(i, pdst, false,
             minterrupted | (1 << Mem<T, U, psize>::READ),
             mnemonic.wrt.ref ? p.ireg : p.reg, invpriv);
+          // cryption:
           break;
         // XXX : memory cache, best case.
         case OP_BMOV:
@@ -638,8 +636,23 @@ public:
   Mem<T, U, psize> mem;
   T pctr;
   T msb;
-  // XXX: how to make sure not to disclosed to lower layer.
-  uint8_t refop[0x10];
+  // N.B. all we can do to fight low layers is to put random address
+  //      with such encrypted addresses, and relocate them in some interval.
+  //      However, even with PIE such vm hosts, if the attacker has its
+  //      source codes and automated the attack, we cannot avoid the attack
+  //      without on demand password with cryption methods with illegal tick.
+  //      To implement them, we should lock the binary with password.
+  //      But even so, if the system has a glitches not shown, they're
+  //      not guaranteed.
+  uint8_t urefopd[0x10];
+  uint8_t irefopd[0x10];
+  uint8_t urefop[0x10];
+  uint8_t irefop[0x10];
+  T umemxord;
+  T imemxord;
+  T umemxor;
+  T imemxor;
+  bool wipe;
 };
 
 #define _SIMPLE_MPU_
