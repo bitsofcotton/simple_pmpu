@@ -337,10 +337,10 @@ public:
     pctr ^= pctr;
   }
   inline SimpleMPU(const int& npu) {
-    pu.resize(npu);
-    bop.resize(npu, make_pair(T(0), T(0)));
-    bsize.resize(npu, T(0));
-    mem = Mem<T, U, psize>(npu);
+    pu.resize(npu * sizeof(T) * 8);
+    bop.resize(pu.size(), make_pair(T(0), T(0)));
+    bsize.resize(pu.size(), T(0));
+    mem = Mem<T, U, psize>(pu.size());
     T mmsb(1);
     while(bool(mmsb)) { msb = mmsb; mmsb <<= 1; }
     for(int i = 0; i < 0x10; i ++)
@@ -350,8 +350,8 @@ public:
     ;
   }
   inline void process() {
-    for(int i = 0; i < pu.size(); i ++) {
-            auto& p(pu[i]);
+    for(int i = 0; i < pu.size() / sizeof(T) / 8; i ++) {
+            auto& p(pu[i * sizeof(T) * 8 + (pctr % (sizeof(T) * 8))]);
       if(pctr < p.pctr) continue;
       p.pctr ++;
       assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
@@ -618,6 +618,9 @@ public:
         }
       }
       p.rip += sizeof(mnemonic_t);
+    }
+    for(int i = 0; i < pu.size() / sizeof(T) / 8; i ++) {
+      auto& p(pu[i);
       p.pending_interrupt |= mem.lazyNext(i);
       p.pending_interrupt |= mem.lazyNextOp(i);
     }
@@ -643,7 +646,8 @@ public:
   //      without on demand password with cryption methods with illegal tick.
   //      To implement them, we should lock the binary with password.
   //      But even so, if the system has a glitches not shown, they're
-  //      not guaranteed.
+  //      not guaranteed. Nor, only with the condition the system has
+  //      key logger, they either not guaranteed.
   uint8_t urefopd[0x10];
   uint8_t irefopd[0x10];
   uint8_t urefop[0x10];
