@@ -375,7 +375,8 @@ public:
           assert(0 && "Should not be reached.");;
         } else {
           ;
-          // XXX: implement:
+          // XXX: implement with counting 1 on the registers
+          //      and index operators in ldop:
 /*
           T res(int(0));
           for(int i = 0; i < sizeof(T) * 8; i ++) 
