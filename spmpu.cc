@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
     std::cerr << "Failed to open file." << std::endl;
     return - 1;
   }
-  ifs.read(reinterpret_cast<char*>(reinterpret_cast<size_t>(&p.mem.m)), sizeof(u16));
+  ifs.read(reinterpret_cast<char*>(reinterpret_cast<size_t>(&p.m.m)), sizeof(u16));
   while(true) p.process();
   return 0;
 }

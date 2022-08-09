@@ -27,12 +27,9 @@ public:
   }
   inline Mem(const int& ncpu) {
     m ^= m;
-    pctr ^= pctr;
     for(bs = 0; T(1) << bs != T(0); bs ++);
     bs --;
     ptop.resize(ncpu, T(0));
-    c_read  = T(1) << READ;
-    c_write = T(1) << WRITE;
   }
   inline ~Mem() {
     ;
@@ -76,14 +73,11 @@ public:
   U   m;
 private:
   int bs;
-  int pctr;
   vector<T> ptop;
-  T   c_read;
-  T   c_write;
 
   // peripheral:
   // disk i/o (pipe/disk), video i/o, audio i/o, network i/o
-  // on shadow memory.
+  // on shadow mory.
   // in hardware, we have to make i/o map by hands or protocols.
 };
 
@@ -103,7 +97,6 @@ public:
     uint8_t cond;
     uint8_t icond;
     T pending_interrupt;
-    T pctr;
     T dblint;
   } pu_t;
   typedef enum {
@@ -155,7 +148,7 @@ public:
     pu.resize(npu * sizeof(T) * 8);
     bop.resize(pu.size(), make_pair(T(0), T(0)));
     bsize.resize(pu.size(), T(0));
-    mem = Mem<T, U, psize>(pu.size());
+    m = Mem<T, U, psize>(pu.size());
     T mmsb(1);
     while(bool(mmsb)) { msb = mmsb; mmsb <<= 1; }
   }
@@ -165,8 +158,6 @@ public:
   inline void process() {
     for(int i = 0; i < pu.size() / sizeof(T) / 8; i ++) {
             auto& p(pu[i * sizeof(T) * 8 + (pctr % (sizeof(T) * 8))]);
-      if(pctr < p.pctr) continue;
-      p.pctr ++;
       assert(((p.cond & (1 << COND_INTERRUPT)) >> COND_INTERRUPT) ^
              ((p.cond & (1 << COND_USER)) >> COND_USER));
       const auto interrupted(p.cond & (1 << COND_INTERRUPT));
@@ -176,7 +167,7 @@ public:
       const auto invpriv(T(1) << (interrupted ? INT_DBLINT : INT_INVPRIV));
       T mbuf[mnsz];
       for(int j = 0; j < mnsz; j ++)
-        p.pending_interrupt |= mem.read(i, mref, false,
+        p.pending_interrupt |= m.read(i, mref, false,
           minterrupted | (1 << Mem<T, U, psize>::EXEC),
           mbuf[j], invpriv);
       // XXX: cryption:
@@ -184,7 +175,7 @@ public:
       if(p.pending_interrupt && ! interrupted) {
         const auto pirip(p.interrupt + sizeof(T) * countLSBset(p.pending_interrupt));
         p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
-        p.pending_interrupt |= mem.read(i, pirip, false,
+        p.pending_interrupt |= m.read(i, pirip, false,
           (1 << Mem<T, U, psize>::INT) | (1 << Mem<T, U, psize>::EXEC),
           p.irip, INT_DBLINT);
         continue;
@@ -195,14 +186,13 @@ public:
           p.cond |= 1 << COND_HALT;
         } else {
           p.dblint = p.irip;
-          p.pending_interrupt |= mem.read(i, p.interrupt, false,
+          p.pending_interrupt |= m.read(i, p.interrupt, false,
             (1 << Mem<T, U, psize>::INT) | (1 << Mem<T, U, psize>::EXEC),
             p.irip, INT_DBLINT);
           p.pending_interrupt &= ~ (T(1) << INT_DBLINT);
         }
         continue;
-      } else if(p.cond & (1 << COND_HALT))
-        p.rip -= sizeof(mnemonic_t);
+      } else if(p.cond & (1 << COND_HALT)) ;
       else if((mnemonic.cond & p.cond) == mnemonic.cond) {
         const auto psrc((interrupted ? p.ireg : p.reg) + mnemonic.src.off);
         const auto pdst((interrupted ? p.ireg : p.reg) + mnemonic.dst.off);
@@ -210,12 +200,12 @@ public:
         T src;
         T dst;
         T wrt;
-        const auto rsrc(mem.read(i, psrc, mnemonic.src.ref, minterrupted | (1 << Mem<T, U, psize>::READ), src, invpriv));
-        const auto rdst(mem.read(i, pdst, mnemonic.dst.ref, minterrupted | (1 << Mem<T, U, psize>::READ), dst, invpriv));
-        const auto rwrt(mem.read(i, pwrt, mnemonic.wrt.ref, minterrupted | (1 << Mem<T, U, psize>::READ), wrt, invpriv));
+        const auto rsrc(m.read(i, psrc, mnemonic.src.ref, minterrupted | (1 << Mem<T, U, psize>::READ), src, invpriv));
+        const auto rdst(m.read(i, pdst, mnemonic.dst.ref, minterrupted | (1 << Mem<T, U, psize>::READ), dst, invpriv));
+        const auto rwrt(m.read(i, pwrt, mnemonic.wrt.ref, minterrupted | (1 << Mem<T, U, psize>::READ), wrt, invpriv));
         if(mnemonic.op < OP_NORMAL_MAX) switch(mnemonic.op) {
         case OP_LDOP:
-          p.pending_interrupt |= mem.read(i, psrc, mnemonic.src.ref,
+          p.pending_interrupt |= m.read(i, psrc, mnemonic.src.ref,
             minterrupted | (1 << Mem<T, U, psize>::EXEC),
             interrupted ? p.iop : p.op, invpriv);
           break;
@@ -232,7 +222,7 @@ public:
               p.pending_interrupt |= invpriv;
               break;
             }
-            p.pending_interrupt |= mem.write(i, bop[i].first, false,
+            p.pending_interrupt |= m.write(i, bop[i].first, false,
               minterrupted, T(0), invpriv);
             bop[i].first += sizeof(T);
             if(bop[i].second <= bop[i].first) {
@@ -256,7 +246,7 @@ public:
             bop[i].first  = src;
             bop[i].second = dst;
             p.pending_interrupt |= rsrc | rdst |
-              mem.read(i, pwrt, mnemonic.wrt.ref,
+              m.read(i, pwrt, mnemonic.wrt.ref,
                 minterrupted | (1 << Mem<T, U, psize>::READ),
                 bsize[i], invpriv);
             if(bsize[i] & msb)
@@ -266,17 +256,17 @@ public:
             break;
           if(bop[i].second < bop[i].first + bsize[i]) {
             T buf(0);
-            p.pending_interrupt |= mem.read(i,
+            p.pending_interrupt |= m.read(i,
               bop[i].first + bsize[i] - sizeof(T), false,
-              minterrupted, buf, invpriv);
-            p.pending_interrupt |= mem.write(i,
+              minterrupted | (1 << Mem<T, U, psize>::READ), buf, invpriv);
+            p.pending_interrupt |= m.write(i,
               bop[i].second + bsize[i] - sizeof(T), false,
               minterrupted, buf, invpriv);
           } else {
             T buf(0);
-            p.pending_interrupt |= mem.read(i, bop[i].first, false,
-              minterrupted, buf, invpriv);
-            p.pending_interrupt |= mem.write(i, bop[i].second, false,
+            p.pending_interrupt |= m.read(i, bop[i].first, false,
+              minterrupted | (1 << Mem<T, U, psize>::READ), buf, invpriv);
+            p.pending_interrupt |= m.write(i, bop[i].second, false,
               minterrupted, buf, invpriv);
             bop[i].first  += sizeof(T);
             bop[i].second += sizeof(T);
@@ -301,12 +291,14 @@ public:
             } else {
               if(interrupted)
                 p.pending_interrupt |=
-                  T(1) << (INT_MPU_START <= mnemonic.dst.off ?
-                            mnemonic.dst.off : invpriv);
-              else
+                  INT_MPU_START <= mnemonic.dst.off ?
+                           T(1) << mnemonic.dst.off : invpriv;
+              else {
                 p.pending_interrupt |=
-                   T(1) << (INT_USER <= mnemonic.dst.off == INT_USER ?
-                             mnemonic.dst.off : invpriv);
+                   INT_USER <= mnemonic.dst.off == INT_USER ?
+                       T(1) << mnemonic.dst.off : invpriv;
+                p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
+              }
             }
           } else {
             if(interrupted) {
@@ -320,36 +312,36 @@ public:
           }
           break;
         case OP_LDIPREGCRYPT:
-          if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
+          if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref | mnemonic.src.ref)) {
             p.pending_interrupt |= invpriv;
             break;
           }
-          p.pending_interrupt |= mem.write(i, pwrt, false, minterrupted,
+          p.pending_interrupt |= m.write(i, pwrt, false, minterrupted,
             mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
-          p.pending_interrupt |= mem.write(i, pdst, false, minterrupted,
+          p.pending_interrupt |= m.write(i, pdst, false, minterrupted,
             mnemonic.dst.ref ? p.ireg : p.reg, invpriv);
-          // cryption:
+          // cryption on src:
           break;
         case OP_STIPREGCRYPT:
-          if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref)) {
+          if(! interrupted && (mnemonic.wrt.ref | mnemonic.dst.ref | mnemonic.src.ref)) {
             p.pending_interrupt |= invpriv;
             break;
           }
-          p.pending_interrupt |= mem.read(i, pwrt, false,
+          p.pending_interrupt |= m.read(i, pwrt, false,
             minterrupted | (1 << Mem<T, U, psize>::READ),
             mnemonic.wrt.ref ? p.irip : p.rip, invpriv);
-          p.pending_interrupt |= mem.read(i, pdst, false,
+          p.pending_interrupt |= m.read(i, pdst, false,
             minterrupted | (1 << Mem<T, U, psize>::READ),
             mnemonic.wrt.ref ? p.ireg : p.reg, invpriv);
-          // cryption:
+          // cryption on src:
           break;
         case OP_LDPAGEINTCONTROL:
           if(interrupted) {
-            p.pending_interrupt |= mem.write(i, pwrt, mnemonic.wrt.ref,
+            p.pending_interrupt |= m.write(i, pwrt, mnemonic.wrt.ref,
               minterrupted, p.control, invpriv);
-            p.pending_interrupt |= mem.write(i, pdst, mnemonic.dst.ref,
+            p.pending_interrupt |= m.write(i, pdst, mnemonic.dst.ref,
               minterrupted, p.page, invpriv);
-            p.pending_interrupt |= mem.write(i, psrc, mnemonic.src.ref,
+            p.pending_interrupt |= m.write(i, psrc, mnemonic.src.ref,
               minterrupted, p.interrupt, invpriv);
           } else
             p.pending_interrupt |= invpriv;
@@ -402,7 +394,7 @@ public:
   vector<pu_t> pu;
   vector<pair<T, T> > bop;
   vector<T> bsize;
-  Mem<T, U, psize> mem;
+  Mem<T, U, psize> m;
   T pctr;
   T msb;
   // N.B. all we can do to fight low layers is to put random address
@@ -413,12 +405,12 @@ public:
   //      To implement them, we should lock the binary with password.
   //      But even so, if the system has a glitches not shown, they're
   //      not guaranteed. Nor, only with the condition the system has
-  //      key logger, they either not guaranteed.
-  mnemonic_t ucrypt;
-  mnemonic_t icrypt;
-  T umem;
-  T imem;
-  bool wipe_cryption_key;
+  //      key logger, they either not be guaranteed.
+  mnemonic_t uc;
+  mnemonic_t ic;
+  T umc;
+  T imc;
+  uint8_t wipe_cryption_key_state;
 };
 
 #define _SIMPLE_MPU_
