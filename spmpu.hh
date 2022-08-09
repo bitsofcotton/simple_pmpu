@@ -295,7 +295,7 @@ public:
                            T(1) << mnemonic.dst.off : invpriv;
               else {
                 p.pending_interrupt |=
-                   INT_USER <= mnemonic.dst.off == INT_USER ?
+                   INT_USER == mnemonic.dst.off ?
                        T(1) << mnemonic.dst.off : invpriv;
                 p.cond ^= (1 << COND_INTERRUPT) | (1 << COND_USER);
               }
