@@ -2610,6 +2610,62 @@ template <typename T> SimpleMatrix<T> diff(const int& size0) {
   return size0 < 0 ? ii : dd;
 }
 
+template <typename T> SimpleMatrix<T> diffRecur(const int& size0) {
+  const auto size(abs(size0));
+  if(! size) {
+    static const SimpleMatrix<T> m0;
+    return m0;
+  }
+  SimpleMatrix<T> dd;
+  SimpleMatrix<T> ii;
+  const auto file(std::string("./.cache/lieonn/diffrecur-") + std::to_string(size) +
+#if defined(_FLOAT_BITS_)
+    std::string("-") + std::to_string(_FLOAT_BITS_)
+#else
+    std::string("-ld")
+#endif
+  );
+  ifstream cache(file.c_str());
+  if(cache.is_open()) {
+    cache >> dd;
+    cache >> ii;
+    cache.close();
+  } else {
+    dd = SimpleMatrix<T>(size, size).O().setMatrix(0, 0,
+         diffRecur<T>(size - 1));
+    ii = SimpleMatrix<T>(size, size).O().setMatrix(0, 0,
+         diffRecur<T>(- size + 1));
+    cerr << "." << flush;
+    if(3 < size) {
+      dd += diff<T>(  size) +
+        SimpleMatrix<T>(size, size).O().setMatrix(1, 1,
+          diffRecur<T>(size - 1));
+      ii += diff<T>(- size) +
+        SimpleMatrix<T>(size, size).O().setMatrix(1, 1,
+          diffRecur<T>(- size + 1));
+      dd.row(0) /= T(int(2));
+      dd.row(dd.rows() - 1) /= T(int(2));
+      ii.row(0) /= T(int(2));
+      ii.row(dd.rows() - 1) /= T(int(2));
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static, 1)
+#endif
+      for(int i = 1; i < dd.rows() - 1; i ++)
+        dd.row(i) /= T(int(3));
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static, 1)
+#endif
+      for(int i = 1; i < ii.rows() - 1; i ++)
+        ii.row(i) /= T(int(3));
+      ofstream ocache(file.c_str());
+      ocache << dd;
+      ocache << ii;
+      ocache.close();
+    }
+  }
+  return size0 < 0 ? ii : dd;
+}
+
 template <typename T> static inline SimpleVector<T> taylor(const int& size, const T& step) {
   const int  step00(max(int(0), min(size - 1, int(floor(step)))));
   const auto residue0(step - T(step00));
@@ -2785,6 +2841,32 @@ private:
   int t;
   int nzt;
   vector<T> d;
+  vector<T> m;
+};
+
+template <typename T, typename P> class shrinkMatrixV {
+public:
+  inline shrinkMatrixV() { ; }
+  inline shrinkMatrixV(P&& p, const int& len = 0) {
+    m.resize(abs(len), T(t ^= t));
+    this->p = p;
+  }
+  inline ~shrinkMatrixV() { ; }
+  inline T next(const SimpleVector<T>& in) {
+    static const T zero(int(0));
+    SimpleVector<T> ff(in.size() - m.size());
+    ff.O();
+    for(int i = m.size(); i < in.size(); i ++)
+      for(int j = 0; j < m.size(); j ++)
+        ff[i - m.size()] += in[i + j - m.size()];
+    m[(t ++) % m.size()] = p.next(ff);
+    auto res(m[0]);
+    for(int i = 1; i < m.size(); i ++) res += m[i];
+    return res /= T(int(m.size() * m.size()));
+  }
+private:
+  P p;
+  int t;
   vector<T> m;
 };
 
